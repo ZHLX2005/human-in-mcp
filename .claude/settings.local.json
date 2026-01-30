@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "mcp__weather-auth__get_weather"
+    ],
+    "deny": [],
+    "ask": []
+  }
+}
