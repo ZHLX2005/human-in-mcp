@@ -43,10 +43,29 @@ func init() {
 func HumanInTool() mcp.Tool {
 	return mcp.NewTool(
 		"human_interaction",
-		mcp.WithDescription("AI完成任务后向用户展示信息并获取下一步指示。实现人机交互循环，支持多轮对话。"),
+		mcp.WithDescription(`【重要：人机交互循环工具】
+
+用途：AI完成每个任务后，必须调用此工具向用户展示结果并获取下一步指示。
+
+工作流程（无限循环）：
+1. AI完成用户指派的任务
+2. AI调用此工具展示任务总结
+3. 用户查看结果并选择下一步
+4. AI收到用户的新任务指示
+5. 重复步骤1...
+
+调用时机：
+- 每次完成任务后
+- 需要用户决策时
+- 需要展示中间结果时
+
+注意事项：
+- 必须保持相同的 conversationId 以维持对话上下文
+- 这是一个持续循环，直到用户明确选择结束
+- 收到返回结果后，务必按照"【重要指令】"执行`),
 		mcp.WithString("summary", mcp.Required(), mcp.Description("完成任务的简单总结")),
 		mcp.WithString("difficulties", mcp.Required(), mcp.Description("遇到的困难、需要的帮助或其他重要信息")),
-		mcp.WithString("conversationId", mcp.Required(), mcp.Description("对话ID，用于跟踪多轮对话，可使用时间戳或UUID")),
+		mcp.WithString("conversationId", mcp.Required(), mcp.Description("对话ID，用于跟踪多轮对话，必须保持一致，可使用时间戳或UUID")),
 		mcp.WithString("nextOptions", mcp.Required(),
 			mcp.Description("接下来的任务可选项，JSON数组字符串格式，例如: [\"继续优化代码\", \"添加测试\", \"提交代码\", \"结束\"]")),
 	)
@@ -131,20 +150,59 @@ func humanInteractionHandler(ctx context.Context, req mcp.CallToolRequest) (*mcp
 	}
 
 	// ========== 构建返回结果 ==========
-	resultJSON, err := json.MarshalIndent(response, "", "  ")
-	if err != nil {
-		return mcp.NewToolResultError("构建响应失败: " + err.Error()), nil
-	}
+	// 核心修改：返回给AI的提示词必须明确指示循环
+	var aiPrompt string
 
-	// 显示确认信息
 	if response.Continue {
-		fmt.Printf("\n✅ 已记录您的选择，将继续执行...\n")
+		// 继续循环：明确告诉AI下一步任务，并要求完成任务后再次调用此工具
+		aiPrompt = fmt.Sprintf(`【用户任务】
+%s
+
+【重要指令】
+1. 请立即执行上述用户任务
+2. 完成任务后，必须再次调用 human_interaction 工具向用户展示结果
+3. 调用时使用相同的 conversationId: %s
+4. 调用参数：
+   - summary: 你完成任务的总结
+   - difficulties: 遇到的问题或困难
+   - conversationId: %s
+   - nextOptions: 建议的下一步选项（JSON数组格式）
+
+【对话上下文】
+- 对话ID: %s
+- 当前是第 %d 轮交互
+
+请记住：这是持续对话循环，每次完成任务后都要调用 human_interaction 工具！`,
+			response.CustomInput,
+			conversationID,
+			conversationID,
+			conversationID,
+			1, // 可以改为计数器
+		)
+
+		fmt.Printf("\n✅ 已记录您的选择，将指示AI执行: %s\n", response.CustomInput)
 	} else {
+		// 结束对话
+		aiPrompt = fmt.Sprintf(`【对话结束】
+用户选择结束本次对话。
+
+对话ID: %s
+结束原因: %s
+
+请停止工作，不需要再调用任何工具。`, conversationID, response.CustomInput)
+
 		fmt.Printf("\n👋 对话已结束\n")
 	}
 	fmt.Println(strings.Repeat("=", 70) + "\n")
 
-	return mcp.NewToolResultText(string(resultJSON)), nil
+	// 同时返回JSON数据（供程序解析）和文本提示（给AI阅读）
+	return mcp.NewToolResultText(fmt.Sprintf("%s\n\n---\n\n用户响应数据（JSON）:\n%s",
+		aiPrompt,
+		func() string {
+			j, _ := json.MarshalIndent(response, "", "  ")
+			return string(j)
+		}(),
+	)), nil
 }
 
 // main 启动 MCP 服务器
