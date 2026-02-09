@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
 )
 
@@ -623,19 +624,24 @@ func serveHomePage(w http.ResponseWriter, r *http.Request) {
 
 // handleTasks 处理手动任务添加请求
 func handleTasks(w http.ResponseWriter, r *http.Request) {
+	log.Printf("🌐 [HTTP] %s %s | 处理手动任务添加请求", r.Method, r.URL.Path)
+
 	if r.Method != http.MethodPost {
+		log.Printf("❌ [HTTP] 方法不允许 | %s", r.Method)
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
 
 	var task TaskRequest
 	if err := json.NewDecoder(r.Body).Decode(&task); err != nil {
+		log.Printf("❌ [HTTP] 请求体解析失败 | %v", err)
 		http.Error(w, "Invalid request body", http.StatusBadRequest)
 		return
 	}
 
 	// 验证必填字段
 	if task.CustomInput == "" {
+		log.Printf("❌ [HTTP] 缺少必填字段 | customInput")
 		http.Error(w, "customInput is required", http.StatusBadRequest)
 		return
 	}
@@ -648,6 +654,7 @@ func handleTasks(w http.ResponseWriter, r *http.Request) {
 	}
 
 	globalSessionManager.PushResponse(response)
+	log.Printf("✅ [HTTP] 手动任务已添加 | 输入: %s | 继续: %t", task.CustomInput, task.Continue)
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]string{
@@ -658,14 +665,22 @@ func handleTasks(w http.ResponseWriter, r *http.Request) {
 
 // handleListTasks 返回当前任务列表
 func handleListTasks(w http.ResponseWriter, r *http.Request) {
+	log.Printf("🌐 [HTTP] %s %s | 获取任务列表", r.Method, r.URL.Path)
+	responses := globalSessionManager.GetResponses()
+	log.Printf("📊 [HTTP] 返回任务列表 | 数量: %d", len(responses))
+
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(globalSessionManager.GetResponses())
+	json.NewEncoder(w).Encode(responses)
 }
 
 // handleRenderTasks 返回AI渲染任务列表
 func handleRenderTasks(w http.ResponseWriter, r *http.Request) {
+	log.Printf("🌐 [HTTP] %s %s | 获取AI渲染任务", r.Method, r.URL.Path)
+	tasks := globalSessionManager.GetRenderTasks()
+	log.Printf("📊 [HTTP] 返回AI渲染任务 | 数量: %d", len(tasks))
+
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(globalSessionManager.GetRenderTasks())
+	json.NewEncoder(w).Encode(tasks)
 }
 
 // handleSelectRenderTask 处理从AI渲染任务中选择选项
