@@ -15,6 +15,8 @@ import (
 	"github.com/mark3labs/mcp-go/server"
 )
 
+var Format string = "%s" // 可导出的格式化字符串，用于格式化用户输入
+
 // 全局debug开关，通过环境变量 HUMAN_IN_MCP_DEBUG 控制输出
 var debugMode = os.Getenv("HUMAN_IN_MCP_DEBUG") == "true"
 
@@ -247,10 +249,12 @@ func (sm *SessionManager) RemoveFirstRenderTask() {
 	}
 }
 
+// 唯一的生产位置 只有这个push 才能保证所有关系的同步性
 // 通过队列来维护存储 chan自己不支持队列方式的查询和存储
 // PushResponse 发送响应到Out通道
 func (sm *SessionManager) PushResponse(resp UserChoiceResponse) {
-	resp.TaskId = insIdGen() // 生成唯一任务ID
+	resp.CustomInput = fmt.Sprintf(Format, resp.CustomInput) // 格式化输入内容
+	resp.TaskId = insIdGen()                                 // 生成唯一任务ID
 	sm.AddResponse(resp)
 
 	sm.Taskmng.AddTask(resp.TaskId, resp.CustomInput) // 将任务添加到任务管理器

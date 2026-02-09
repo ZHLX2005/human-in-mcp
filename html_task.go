@@ -25,6 +25,8 @@ func StartTaskServer() {
 	http.HandleFunc("/api/render-tasks", handleRenderTasks)
 	http.HandleFunc("/api/render-tasks/select", handleSelectRenderTask)
 	http.HandleFunc("/api/render-tasks/abandon", handleAbandonRenderTask) // 遗弃AI渲染任务
+	http.HandleFunc("/api/format/get", handleGetFormat)                   // 获取格式化字符串
+	http.HandleFunc("/api/format/set", handleSetFormat)                   // 设置格式化字符串
 
 	fmt.Println("📝 任务管理页面: http://localhost:8094")
 	go http.ListenAndServe(":8094", nil)
@@ -325,6 +327,12 @@ func serveHomePage(w http.ResponseWriter, r *http.Request) {
                     </div>
 
                     <div class="form-group">
+                        <label for="formatInput">格式化模板</label>
+                        <input type="text" id="formatInput" placeholder="%s" value="%s">
+                        <div style="font-size: 10px; color: #999; margin-top: 4px;">使用 %s 作为占位符，例如：前缀%s后缀</div>
+                    </div>
+
+                    <div class="form-group">
                         <label for="manualContinueTask">任务类型</label>
                         <select id="manualContinueTask">
                             <option value="true">继续任务</option>
@@ -417,6 +425,51 @@ func serveHomePage(w http.ResponseWriter, r *http.Request) {
             }
         });
 
+        // 格式化字符串相关功能
+        const formatInput = document.getElementById('formatInput');
+
+        // 加载当前格式化字符串
+        async function loadFormat() {
+            try {
+                const response = await fetch('/api/format/get');
+                const data = await response.json();
+                formatInput.value = data.format;
+            } catch (error) {
+                console.error('加载格式化字符串失败:', error);
+            }
+        }
+
+        // 保存格式化字符串
+        async function saveFormat() {
+            const newFormat = formatInput.value.trim();
+
+            try {
+                const response = await fetch('/api/format/set', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ format: newFormat })
+                });
+
+                if (response.ok) {
+                    showMessage('manualMessage', '格式化模板已更新', 'success');
+                } else {
+                    showMessage('manualMessage', '更新失败', 'error');
+                }
+            } catch (error) {
+                showMessage('manualMessage', '网络错误', 'error');
+            }
+        }
+
+        // 当格式化输入框失去焦点时自动保存
+        formatInput.addEventListener('blur', () => {
+            if (formatInput.value.trim() !== '') {
+                saveFormat();
+            }
+        });
+
+        // 页面加载时获取格式化字符串
+        loadFormat();
+
         // 手动任务表单
         document.getElementById('manualTaskForm').addEventListener('submit', async (e) => {
             e.preventDefault();
@@ -440,6 +493,8 @@ func serveHomePage(w http.ResponseWriter, r *http.Request) {
                     // 重置后重新启用输入框
                     document.getElementById('manualCustomInput').disabled = false;
                     document.getElementById('manualCustomInput').required = true;
+                    // 重新加载格式化字符串（防止被reset重置）
+                    loadFormat();
                     loadTaskStatus();
                 } else {
                     showMessage('manualMessage', '添加失败：' + (await response.text()), 'error');
@@ -1118,4 +1173,52 @@ func handleTaskStatus(w http.ResponseWriter, r *http.Request) {
 	// 从 TaskManager 获取所有任务状态
 	tasks := globalSessionManager.Taskmng.GetAllTasks()
 	json.NewEncoder(w).Encode(tasks)
+}
+
+// handleGetFormat 获取当前格式化字符串
+func handleGetFormat(w http.ResponseWriter, r *http.Request) {
+	debugLog("🌐 [HTTP] %s %s | 获取格式化字符串", r.Method, r.URL.Path)
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{
+		"format": Format,
+	})
+}
+
+// handleSetFormat 设置格式化字符串
+func handleSetFormat(w http.ResponseWriter, r *http.Request) {
+	debugLog("🌐 [HTTP] %s %s | 设置格式化字符串", r.Method, r.URL.Path)
+
+	if r.Method != http.MethodPost {
+		debugLog("❌ [HTTP] 方法不允许 | %s", r.Method)
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var req struct {
+		Format string `json:"format"`
+	}
+
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		debugLog("❌ [HTTP] 请求体解析失败 | %v", err)
+		http.Error(w, "Invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	if req.Format == "" {
+		debugLog("❌ [HTTP] 格式化字符串不能为空")
+		http.Error(w, "Format cannot be empty", http.StatusBadRequest)
+		return
+	}
+
+	// 更新全局格式化字符串
+	Format = req.Format
+	debugLog("✅ [HTTP] 格式化字符串已更新 | 新值: %s", Format)
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"status":  "success",
+		"message": "Format updated",
+		"format":  Format,
+	})
 }
