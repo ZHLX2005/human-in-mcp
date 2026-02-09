@@ -11,11 +11,19 @@ import (
 	"github.com/mark3labs/mcp-go/server"
 )
 
+type TaskStatusCtr struct {
+	taskId string
+	status string // pending, processing, completed
+	req    string // 原始的请求
+	resp   string // 响应之后携带的summary
+}
+
 // UserChoiceResponse 用户的选择响应
 type UserChoiceResponse struct {
+	TaskId        string `json:"taskId"`        // 任务ID，创建的任务id
 	SelectedIndex int    `json:"selectedIndex"` // 用户选择的选项索引（-1表示自定义输入）
-	CustomInput    string `json:"customInput"`  // 自定义输入内容
-	Continue       bool   `json:"continue"`     // 是否继续对话
+	CustomInput   string `json:"customInput"`   // 自定义输入内容
+	Continue      bool   `json:"continue"`      // 是否继续对话
 }
 
 // RenderTask AI渲染任务，包含需要显示的信息
@@ -72,8 +80,10 @@ func (sm *SessionManager) GetRenderTasks() []RenderTask {
 	return sm.renderTasks
 }
 
+// 通过队列来维护存储 chan自己不支持队列方式的查询和存储
 // PushResponse 发送响应到Out通道
 func (sm *SessionManager) PushResponse(resp UserChoiceResponse) {
+	resp.TaskId = insIdGen() // 生成唯一任务ID
 	sm.AddResponse(resp)
 	select {
 	case sm.Out <- resp:
@@ -115,10 +125,19 @@ func HumanInTool() mcp.Tool {
 • 这是一个持续循环，直到用户明确选择结束
 • 收到返回结果后，务必按照"【重要指令】"执行`),
 		mcp.WithString("summary", mcp.Required(), mcp.Description("完成任务的简单总结")),
+		mcp.WithString("taskId", mcp.Required(), mcp.Description("插件内部提供的唯一任务Id,对于完成的每个任务都会生成一个唯一的任务Id，AI可以通过这个Id来追踪和管理任务的状态 , 如果没有对话历史,传值不做要求")),
+
 		mcp.WithString("difficulties", mcp.Required(), mcp.Description("遇到的困难、需要的帮助或其他重要信息")),
 		mcp.WithString("nextOptions", mcp.Required(),
 			mcp.Description("接下来的任务可选项，JSON数组字符串格式，例如: [\"继续优化代码\", \"添加测试\", \"提交代码\", \"结束\"]")),
 	)
+}
+
+func process(id string) {
+	if id != "" {
+		fmt.Printf("Received task with ID: %s\n", id)
+	}
+
 }
 
 // humanInteractionHandler 处理人机交互请求
@@ -127,6 +146,8 @@ func humanInteractionHandler(ctx context.Context, req mcp.CallToolRequest) (*mcp
 	summary, _ := req.RequireString("summary")
 	difficulties, _ := req.RequireString("difficulties")
 	nextOptionsStr, _ := req.RequireString("nextOptions")
+	id, _ := req.RequireString("taskId")
+	process(id)
 
 	var nextOptions []string
 	if err := json.Unmarshal([]byte(nextOptionsStr), &nextOptions); err != nil {
@@ -161,14 +182,15 @@ func humanInteractionHandler(ctx context.Context, req mcp.CallToolRequest) (*mcp
  • summary: 你完成任务的总结
  • difficulties: 遇到的问题或困难
  • nextOptions: 建议的下一步选项（JSON数组格式）
-
+ • taskId 请在完成之后,调用human_interaction工具的时候携带这个taskId: %s ,以便追踪和管理任务状态
 请记住：这是持续对话循环，每次完成任务后都要调用 human_interaction 工具！`,
 			response.CustomInput,
+			response.TaskId,
 		)
 	} else {
-		aiPrompt = fmt.Sprintf(`【对话结束】
+		aiPrompt = `【对话结束】
 用户选择结束本次对话。
-请停止工作，不需要再调用任何工具。`)
+请停止工作，不需要再调用任何工具。`
 	}
 
 	// 返回结构化结果 + AI提示
