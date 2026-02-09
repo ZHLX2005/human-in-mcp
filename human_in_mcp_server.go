@@ -22,34 +22,81 @@ type UserChoiceResponse struct {
 	Continue       bool   `json:"continue"`       // 是否继续对话
 }
 
-// SessionManager 管理单次工具调用的交互会话
-type SessionManager struct {
-	toRender       chan struct{}           // 触发渲染（可选，此处简化为直接调用）
-	Out            chan UserChoiceResponse // 返回给 handler 的最终有效响应
+// RenderTask 渲染任务，包含需要显示的信息
+type RenderTask struct {
 	nextOptions    []string
 	conversationID string
 	summary        string
 	difficulties   string
 }
 
-var globalReader = bufio.NewReader(os.Stdin)
-var sessionMutex sync.Mutex // 保证同一时间只有一个会话（简化设计）
+// SessionManager 全局单例会话管理器
+type SessionManager struct {
+	toRender  chan RenderTask         // 渲染任务通道
+	Out       chan UserChoiceResponse // 用户响应通道，容量10
+	mu        sync.RWMutex            // 保护responses切片
+	responses []UserChoiceResponse    // 缓存已接收的响应（用于展示）
+}
 
-// render 启动交互循环，直到获得有效输入
+// 全局单例
+var globalSessionManager = &SessionManager{
+	toRender:  make(chan RenderTask, 10),
+	Out:       make(chan UserChoiceResponse, 10),
+	responses: make([]UserChoiceResponse, 0, 10),
+}
+
+var globalReader = bufio.NewReader(os.Stdin)
+
+// ListResponses 展示当前channel中已接收的响应
+func (sm *SessionManager) ListResponses() {
+	sm.mu.RLock()
+	defer sm.mu.RUnlock()
+
+	fmt.Println("\n" + strings.Repeat("=", 70))
+	fmt.Println("📋 当前响应队列:")
+	fmt.Println(strings.Repeat("=", 70))
+
+	if len(sm.responses) == 0 {
+		fmt.Println("（暂无响应）")
+	} else {
+		for i, resp := range sm.responses {
+			fmt.Printf("[%d] 对话ID: %s\n", i+1, resp.ConversationID)
+			fmt.Printf("    内容: %s\n", resp.CustomInput)
+			fmt.Printf("    继续: %v\n", resp.Continue)
+		}
+	}
+	fmt.Println(strings.Repeat("=", 70))
+}
+
+// addResponse 添加响应到缓存
+func (sm *SessionManager) addResponse(resp UserChoiceResponse) {
+	sm.mu.Lock()
+	defer sm.mu.Unlock()
+	sm.responses = append(sm.responses, resp)
+}
+
+// render 全局渲染循环，在main中启动
 func (sm *SessionManager) render() {
+	for task := range sm.toRender {
+		sm.renderOnce(task)
+	}
+}
+
+// renderOnce 执行一次渲染和输入收集
+func (sm *SessionManager) renderOnce(task RenderTask) {
 	for {
 		// ========== 显示界面给用户 ==========
 		fmt.Println("\n" + strings.Repeat("=", 70))
-		fmt.Printf("🤖 AI 任务完成报告 [对话ID: %s]\n", sm.conversationID)
+		fmt.Printf("🤖 AI 任务完成报告 [对话ID: %s]\n", task.conversationID)
 		fmt.Println(strings.Repeat("=", 70))
 		fmt.Println("\n📋 任务总结:")
-		fmt.Println(sm.summary)
-		if sm.difficulties != "" && sm.difficulties != "无" && sm.difficulties != "无困难" {
+		fmt.Println(task.summary)
+		if task.difficulties != "" && task.difficulties != "无" && task.difficulties != "无困难" {
 			fmt.Println("\n⚠️ 遇到的问题/需要的帮助:")
-			fmt.Println(sm.difficulties)
+			fmt.Println(task.difficulties)
 		}
 		fmt.Println("\n🔄 接下来的可选项:")
-		for i, option := range sm.nextOptions {
+		for i, option := range task.nextOptions {
 			fmt.Printf(" [%d] %s\n", i+1, option)
 		}
 		fmt.Println(" [0] 自定义输入")
@@ -67,13 +114,14 @@ func (sm *SessionManager) render() {
 
 		// ========== 处理并验证用户输入 ==========
 		response := UserChoiceResponse{
-			ConversationID: sm.conversationID,
+			ConversationID: task.conversationID,
 		}
 
 		switch input {
 		case "q", "Q", "quit", "exit":
 			response.Continue = false
 			response.CustomInput = "用户选择结束对话"
+			sm.addResponse(response)
 			sm.Out <- response
 			return
 
@@ -87,19 +135,21 @@ func (sm *SessionManager) render() {
 			response.Continue = true
 			response.CustomInput = strings.TrimSpace(customInput)
 			response.SelectedIndex = -1
+			sm.addResponse(response)
 			sm.Out <- response
 			return
 
 		default:
 			var index int
 			_, err := fmt.Sscanf(input, "%d", &index)
-			if err != nil || index < 1 || index > len(sm.nextOptions) {
-				fmt.Printf("❌ 无效输入！请输入 0-%d 之间的数字，或 q 退出。\n", len(sm.nextOptions))
+			if err != nil || index < 1 || index > len(task.nextOptions) {
+				fmt.Printf("❌ 无效输入！请输入 0-%d 之间的数字，或 q 退出。\n", len(task.nextOptions))
 				continue // 重试
 			}
 			response.Continue = true
 			response.SelectedIndex = index - 1
-			response.CustomInput = sm.nextOptions[index-1]
+			response.CustomInput = task.nextOptions[index-1]
+			sm.addResponse(response)
 			sm.Out <- response
 			return
 		}
@@ -136,9 +186,6 @@ func HumanInTool() mcp.Tool {
 
 // humanInteractionHandler 处理人机交互请求
 func humanInteractionHandler(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	sessionMutex.Lock()
-	defer sessionMutex.Unlock()
-
 	// 解析参数
 	summary, _ := req.RequireString("summary")
 	difficulties, _ := req.RequireString("difficulties")
@@ -150,20 +197,16 @@ func humanInteractionHandler(ctx context.Context, req mcp.CallToolRequest) (*mcp
 		nextOptions = []string{nextOptionsStr}
 	}
 
-	// 创建会话管理器
-	sm := &SessionManager{
-		Out:            make(chan UserChoiceResponse, 1),
+	// 发送渲染任务到全局会话管理器
+	globalSessionManager.toRender <- RenderTask{
 		nextOptions:    nextOptions,
 		conversationID: conversationID,
 		summary:        summary,
 		difficulties:   difficulties,
 	}
 
-	// 启动渲染和输入循环（goroutine）
-	go sm.render()
-
 	// 阻塞等待用户有效响应
-	response := <-sm.Out
+	response := <-globalSessionManager.Out
 
 	// ========== 构建返回结果 ==========
 	var aiPrompt string
@@ -210,6 +253,9 @@ func humanInteractionHandler(ctx context.Context, req mcp.CallToolRequest) (*mcp
 
 // main 启动 MCP 服务器
 func main() {
+	// 启动全局渲染循环
+	go globalSessionManager.render()
+
 	mcpServer := server.NewMCPServer("human-in-mcp", "v1.0.0",
 		server.WithToolCapabilities(true),
 	)

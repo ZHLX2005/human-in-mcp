@@ -6,10 +6,14 @@ claude mcp add --transport sse human-in-mcp http://localhost:8093/sse
 
 claude
 
-添加全局的 
+添加全局的
 
 claude mcp add --transport sse --scope user human-in-mcp http://localhost:8093/sse
 
 请使用mcp当中 human-in-mcp 的  human_interaction工具
 
 3
+
+请使用mcp当中 human-in-mcp 的  human_interaction工具
+
+claude --dangerously-skip-permissions
