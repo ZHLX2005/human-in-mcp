@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"os"
@@ -16,6 +17,42 @@ import (
 
 // 全局debug开关，通过环境变量 HUMAN_IN_MCP_DEBUG 控制输出
 var debugMode = os.Getenv("HUMAN_IN_MCP_DEBUG") == "true"
+
+// 全局日志文件
+var logFile *os.File
+
+// initLog 初始化日志文件
+func initLog() error {
+	if !debugMode {
+		return nil
+	}
+
+	// 创建日志文件路径
+	logPath := "human_in_mcp_debug.log"
+
+	// 打开日志文件（追加模式，如果不存在则创建）
+	file, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
+	if err != nil {
+		return fmt.Errorf("打开日志文件失败: %v", err)
+	}
+
+	logFile = file
+
+	// 设置日志输出到文件和标准输出
+	log.SetOutput(io.MultiWriter(os.Stdout, logFile))
+	log.SetFlags(log.Ldate | log.Ltime | log.Lmicroseconds)
+
+	log.Println("🚀 [系统] 日志系统初始化完成 | 日志文件: " + logPath)
+
+	return nil
+}
+
+// closeLog 关闭日志文件
+func closeLog() {
+	if logFile != nil {
+		logFile.Close()
+	}
+}
 
 // debugLog 仅在debug模式下输出日志
 func debugLog(format string, v ...interface{}) {
@@ -330,6 +367,12 @@ func humanInteractionHandler(ctx context.Context, req mcp.CallToolRequest) (*mcp
 
 // main 启动 MCP 服务器
 func main() {
+	// 初始化日志系统
+	if err := initLog(); err != nil {
+		fmt.Printf("⚠️  日志系统初始化失败: %v\n", err)
+	}
+	defer closeLog() // 确保程序退出时关闭日志文件
+
 	// 启动任务管理HTTP服务器
 	StartTaskServer()
 
@@ -343,6 +386,7 @@ func main() {
 	mux.Handle("/", sseServer)
 	fmt.Println("✅ Human-In-MCP Server running on http://localhost:8093")
 	fmt.Println("📝 任务管理页面: http://localhost:8094")
+	fmt.Println("📋 Debug日志文件: human_in_mcp_debug.log")
 	if err := http.ListenAndServe("localhost:8093", mux); err != nil {
 		panic(err)
 	}
