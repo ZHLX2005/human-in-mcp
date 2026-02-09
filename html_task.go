@@ -3,7 +3,6 @@ package main
 import (
 	"encoding/json"
 	"fmt"
-	"log"
 	"net/http"
 )
 
@@ -23,6 +22,7 @@ func StartTaskServer() {
 	http.HandleFunc("/api/tasks/status", handleTaskStatus) // 获取任务状态
 	http.HandleFunc("/api/render-tasks", handleRenderTasks)
 	http.HandleFunc("/api/render-tasks/select", handleSelectRenderTask)
+	http.HandleFunc("/api/render-tasks/abandon", handleAbandonRenderTask) // 遗弃AI渲染任务
 
 	fmt.Println("📝 任务管理页面: http://localhost:8094")
 	go http.ListenAndServe(":8094", nil)
@@ -310,8 +310,8 @@ func serveHomePage(w http.ResponseWriter, r *http.Request) {
         <!-- 左侧：手动添加任务 -->
         <div class="panel">
             <div class="header">
-                <h2>📝 手动添加任务</h2>
-                <p>直接添加任务到队列</p>
+                <h2>📝 添加待处理任务</h2>
+                <p>创建新的待处理任务</p>
             </div>
             <div class="content">
                 <div id="manualMessage" class="message"></div>
@@ -332,14 +332,6 @@ func serveHomePage(w http.ResponseWriter, r *http.Request) {
 
                     <button type="submit" class="btn btn-primary">添加任务</button>
                 </form>
-
-                <div class="list-header">
-                    <span>任务队列</span>
-                    <span id="taskCount" class="badge">0</span>
-                </div>
-                <div id="taskList">
-                    <div class="empty-state">暂无任务</div>
-                </div>
             </div>
         </div>
 
@@ -400,7 +392,6 @@ func serveHomePage(w http.ResponseWriter, r *http.Request) {
                 if (response.ok) {
                     showMessage('manualMessage', '任务添加成功！', 'success');
                     document.getElementById('manualTaskForm').reset();
-                    loadTasks();
                     loadTaskStatus();
                 } else {
                     showMessage('manualMessage', '添加失败：' + (await response.text()), 'error');
@@ -409,30 +400,6 @@ func serveHomePage(w http.ResponseWriter, r *http.Request) {
                 showMessage('manualMessage', '网络错误：' + error.message, 'error');
             }
         });
-
-        // 加入手动任务列表
-        async function loadTasks() {
-            try {
-                const response = await fetch('/api/tasks/list');
-                const tasks = await response.json();
-
-                const taskList = document.getElementById('taskList');
-                document.getElementById('taskCount').textContent = tasks.length;
-
-                if (tasks.length === 0) {
-                    taskList.innerHTML = '<div class="empty-state">暂无任务</div>';
-                } else {
-                    taskList.innerHTML = tasks.map((task, index) => {
-                        return '<div class="task-item">' +
-                            '<div class="task-content">' + escapeHtml(task.customInput) + '</div>' +
-                            '<div class="task-meta">类型: ' + (task.continue ? '继续' : '结束') + '</div>' +
-                            '</div>';
-                    }).join('');
-                }
-            } catch (error) {
-                console.error('加载任务列表失败:', error);
-            }
-        }
 
         // 加载AI渲染任务列表
         async function loadRenderTasks() {
@@ -454,6 +421,7 @@ func serveHomePage(w http.ResponseWriter, r *http.Request) {
                                 optionsHtml += '<button class="option-btn" onclick="selectOption(' + i + ', \'' + escapeHtml(opt).replace(/'/g, "\\'") + '\')">[' + (i + 1) + '] ' + escapeHtml(opt.substring(0, 15)) + '</button>';
                             });
                             optionsHtml += '<button class="option-btn" onclick="showCustomInput()">自定义</button>';
+                            optionsHtml += '<button class="option-btn" onclick="abandonTask()">遗弃</button>';
                             optionsHtml += '<button class="option-btn" onclick="endChat()">结束</button>';
                             optionsHtml += '</div>';
                         }
@@ -591,6 +559,30 @@ func serveHomePage(w http.ResponseWriter, r *http.Request) {
             }
         }
 
+        // 遗弃任务
+        async function abandonTask() {
+            if (!confirm('确定要遗弃这个任务吗？遗弃后任务将被移除。')) {
+                return;
+            }
+
+            try {
+                const response = await fetch('/api/render-tasks/abandon', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' }
+                });
+
+                if (response.ok) {
+                    showMessage('renderMessage', '任务已遗弃', 'success');
+                    loadRenderTasks();
+                    loadTaskStatus();
+                } else {
+                    showMessage('renderMessage', '遗弃失败', 'error');
+                }
+            } catch (error) {
+                showMessage('renderMessage', '网络错误', 'error');
+            }
+        }
+
         function showMessage(elementId, text, type) {
             const message = document.getElementById(elementId);
             message.textContent = text;
@@ -606,12 +598,10 @@ func serveHomePage(w http.ResponseWriter, r *http.Request) {
         }
 
         // 页面加载时获取数据
-        loadTasks();
         loadRenderTasks();
         loadTaskStatus();
         // 每2秒自动刷新
         setInterval(() => {
-            loadTasks();
             loadRenderTasks();
             loadTaskStatus();
         }, 2000);
@@ -624,24 +614,24 @@ func serveHomePage(w http.ResponseWriter, r *http.Request) {
 
 // handleTasks 处理手动任务添加请求
 func handleTasks(w http.ResponseWriter, r *http.Request) {
-	log.Printf("🌐 [HTTP] %s %s | 处理手动任务添加请求", r.Method, r.URL.Path)
+	debugLog("🌐 [HTTP] %s %s | 处理手动任务添加请求", r.Method, r.URL.Path)
 
 	if r.Method != http.MethodPost {
-		log.Printf("❌ [HTTP] 方法不允许 | %s", r.Method)
+		debugLog("❌ [HTTP] 方法不允许 | %s", r.Method)
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
 
 	var task TaskRequest
 	if err := json.NewDecoder(r.Body).Decode(&task); err != nil {
-		log.Printf("❌ [HTTP] 请求体解析失败 | %v", err)
+		debugLog("❌ [HTTP] 请求体解析失败 | %v", err)
 		http.Error(w, "Invalid request body", http.StatusBadRequest)
 		return
 	}
 
 	// 验证必填字段
 	if task.CustomInput == "" {
-		log.Printf("❌ [HTTP] 缺少必填字段 | customInput")
+		debugLog("❌ [HTTP] 缺少必填字段 | customInput")
 		http.Error(w, "customInput is required", http.StatusBadRequest)
 		return
 	}
@@ -654,7 +644,7 @@ func handleTasks(w http.ResponseWriter, r *http.Request) {
 	}
 
 	globalSessionManager.PushResponse(response)
-	log.Printf("✅ [HTTP] 手动任务已添加 | 输入: %s | 继续: %t", task.CustomInput, task.Continue)
+	debugLog("✅ [HTTP] 手动任务已添加 | 输入: %s | 继续: %t", task.CustomInput, task.Continue)
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]string{
@@ -663,21 +653,32 @@ func handleTasks(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// handleListTasks 返回当前任务列表
+// handleListTasks 返回当前待处理的任务列表（pending状态）
 func handleListTasks(w http.ResponseWriter, r *http.Request) {
-	log.Printf("🌐 [HTTP] %s %s | 获取任务列表", r.Method, r.URL.Path)
-	responses := globalSessionManager.GetResponses()
-	log.Printf("📊 [HTTP] 返回任务列表 | 数量: %d", len(responses))
+	debugLog("🌐 [HTTP] %s %s | 获取待处理任务列表", r.Method, r.URL.Path)
+
+	// 获取所有任务状态
+	allTasks := globalSessionManager.Taskmng.GetAllTasks()
+
+	// 筛选出pending状态的任务
+	pendingTasks := make([]*TaskStatus, 0)
+	for _, task := range allTasks {
+		if task.Status == "pending" {
+			pendingTasks = append(pendingTasks, task)
+		}
+	}
+
+	debugLog("📊 [HTTP] 返回待处理任务列表 | 数量: %d", len(pendingTasks))
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(responses)
+	json.NewEncoder(w).Encode(pendingTasks)
 }
 
 // handleRenderTasks 返回AI渲染任务列表
 func handleRenderTasks(w http.ResponseWriter, r *http.Request) {
-	log.Printf("🌐 [HTTP] %s %s | 获取AI渲染任务", r.Method, r.URL.Path)
+	debugLog("🌐 [HTTP] %s %s | 获取AI渲染任务", r.Method, r.URL.Path)
 	tasks := globalSessionManager.GetRenderTasks()
-	log.Printf("📊 [HTTP] 返回AI渲染任务 | 数量: %d", len(tasks))
+	debugLog("📊 [HTTP] 返回AI渲染任务 | 数量: %d", len(tasks))
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(tasks)
@@ -729,10 +730,43 @@ func handleSelectRenderTask(w http.ResponseWriter, r *http.Request) {
 	// 发送到Out通道
 	globalSessionManager.PushResponse(response)
 
+	// 移除已处理的渲染任务
+	globalSessionManager.RemoveFirstRenderTask()
+
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]string{
 		"status":  "success",
 		"message": "Response sent",
+	})
+}
+
+// handleAbandonRenderTask 遗弃AI渲染任务
+func handleAbandonRenderTask(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	debugLog("🌐 [HTTP] %s %s | 遗弃AI渲染任务", r.Method, r.URL.Path)
+
+	// 获取第一个渲染任务
+	renderTasks := globalSessionManager.GetRenderTasks()
+	if len(renderTasks) == 0 {
+		debugLog("❌ [HTTP] 没有可遗弃的渲染任务")
+		http.Error(w, "No render task available", http.StatusNotFound)
+		return
+	}
+
+	abandonedTask := renderTasks[0]
+	debugLog("🗑️  [HTTP] 遗弃AI渲染任务 | 摘要: %s", abandonedTask.Summary)
+
+	// 移除第一个渲染任务
+	globalSessionManager.RemoveFirstRenderTask()
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{
+		"status":  "success",
+		"message": "Task abandoned",
 	})
 }
 

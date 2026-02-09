@@ -6,12 +6,23 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"os"
 	"sync"
 	"time"
 
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
 )
+
+// 全局debug开关，通过环境变量 HUMAN_IN_MCP_DEBUG 控制输出
+var debugMode = os.Getenv("HUMAN_IN_MCP_DEBUG") == "true"
+
+// debugLog 仅在debug模式下输出日志
+func debugLog(format string, v ...interface{}) {
+	if debugMode {
+		log.Printf(format, v...)
+	}
+}
 
 type TaskStatus struct {
 	TaskId string `json:"taskId"`
@@ -25,7 +36,7 @@ type TaskManager struct {
 }
 
 func NewTaskManager() *TaskManager {
-	log.Println("📋 [TaskManager] 初始化任务管理器")
+	debugLog("📋 [TaskManager] 初始化任务管理器")
 	return &TaskManager{
 		tasks: make(map[string]*TaskStatus),
 	}
@@ -39,7 +50,7 @@ func (tm *TaskManager) AddTask(taskId, req string) {
 		Status: "pending",
 		Req:    req,
 	}
-	log.Printf("✅ [TaskManager] 新建任务 | ID: %s | 状态: pending | 请求: %s", taskId, req)
+	debugLog("✅ [TaskManager] 新建任务 | ID: %s | 状态: pending | 请求: %s", taskId, req)
 }
 
 func (tm *TaskManager) UpdateTask(taskId, status, resp string) {
@@ -49,9 +60,9 @@ func (tm *TaskManager) UpdateTask(taskId, status, resp string) {
 		oldStatus := task.Status
 		task.Status = status
 		task.Resp = resp
-		log.Printf("🔄 [TaskManager] 更新任务 | ID: %s | %s -> %s | 响应: %s", taskId, oldStatus, status, resp)
+		debugLog("🔄 [TaskManager] 更新任务 | ID: %s | %s -> %s | 响应: %s", taskId, oldStatus, status, resp)
 	} else {
-		log.Printf("⚠️  [TaskManager] 任务不存在，无法更新 | ID: %s", taskId)
+		debugLog("⚠️  [TaskManager] 任务不存在，无法更新 | ID: %s", taskId)
 	}
 }
 
@@ -121,7 +132,7 @@ func (sm *SessionManager) AddResponse(resp UserChoiceResponse) {
 	sm.mu.Lock()
 	defer sm.mu.Unlock()
 	sm.responses = append(sm.responses, resp)
-	log.Printf("📥 [SessionManager] 添加响应到队列 | TaskID: %s | 输入: %s", resp.TaskId, resp.CustomInput)
+	debugLog("📥 [SessionManager] 添加响应到队列 | TaskID: %s | 输入: %s", resp.TaskId, resp.CustomInput)
 }
 
 // GetResponses 获取所有响应
@@ -136,7 +147,7 @@ func (sm *SessionManager) AddRenderTask(task RenderTask) {
 	sm.mu.Lock()
 	defer sm.mu.Unlock()
 	sm.renderTasks = append(sm.renderTasks, task)
-	log.Printf("📤 [SessionManager] 添加AI渲染任务 | 摘要: %s | 困难: %s", task.Summary, task.Difficulties)
+	debugLog("📤 [SessionManager] 添加AI渲染任务 | 摘要: %s | 困难: %s", task.Summary, task.Difficulties)
 }
 
 // GetRenderTasks 获取所有AI渲染任务
@@ -144,6 +155,17 @@ func (sm *SessionManager) GetRenderTasks() []RenderTask {
 	sm.mu.RLock()
 	defer sm.mu.RUnlock()
 	return sm.renderTasks
+}
+
+// RemoveFirstRenderTask 移除第一个渲染任务（已处理）
+func (sm *SessionManager) RemoveFirstRenderTask() {
+	sm.mu.Lock()
+	defer sm.mu.Unlock()
+	if len(sm.renderTasks) > 0 {
+		removed := sm.renderTasks[0]
+		sm.renderTasks = sm.renderTasks[1:]
+		debugLog("🗑️  [SessionManager] 移除已处理的渲染任务 | 摘要: %s", removed.Summary)
+	}
 }
 
 // 通过队列来维护存储 chan自己不支持队列方式的查询和存储
@@ -156,9 +178,9 @@ func (sm *SessionManager) PushResponse(resp UserChoiceResponse) {
 
 	select {
 	case sm.Out <- resp:
-		log.Printf("📨 [SessionManager] 响应已发送到Out通道 | TaskID: %s | 继续: %t", resp.TaskId, resp.Continue)
+		debugLog("📨 [SessionManager] 响应已发送到Out通道 | TaskID: %s | 继续: %t", resp.TaskId, resp.Continue)
 	default:
-		log.Printf("⚠️  [SessionManager] Out通道已满，响应未发送 | TaskID: %s", resp.TaskId)
+		debugLog("⚠️  [SessionManager] Out通道已满，响应未发送 | TaskID: %s", resp.TaskId)
 	}
 }
 
@@ -192,7 +214,7 @@ func HumanInTool() mcp.Tool {
 
 func process(sm *SessionManager, id, summary string) {
 	if id != "" {
-		log.Printf("🎯 [MCP] 处理任务完成 | TaskID: %s | 摘要: %s", id, summary)
+		debugLog("🎯 [MCP] 处理任务完成 | TaskID: %s | 摘要: %s", id, summary)
 		sm.Taskmng.UpdateTask(id, "completed", summary)
 	}
 }
@@ -200,7 +222,7 @@ func process(sm *SessionManager, id, summary string) {
 // humanInteractionHandler 处理人机交互请求
 func humanInteractionHandler(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	startTime := time.Now()
-	log.Println("🤖 [MCP] ========== 人机交互请求开始 ==========")
+	debugLog("🤖 [MCP] ========== 人机交互请求开始 ==========")
 
 	// 解析参数
 	summary, _ := req.RequireString("summary")
@@ -208,7 +230,7 @@ func humanInteractionHandler(ctx context.Context, req mcp.CallToolRequest) (*mcp
 	nextOptionsStr, _ := req.RequireString("nextOptions")
 	id, _ := req.RequireString("taskId")
 
-	log.Printf("📝 [MCP] 请求参数 | TaskID: %s | 摘要: %s | 困难: %s", id, summary, difficulties)
+	debugLog("📝 [MCP] 请求参数 | TaskID: %s | 摘要: %s | 困难: %s", id, summary, difficulties)
 
 	process(globalSessionManager, id, summary)
 
@@ -216,7 +238,7 @@ func humanInteractionHandler(ctx context.Context, req mcp.CallToolRequest) (*mcp
 	if err := json.Unmarshal([]byte(nextOptionsStr), &nextOptions); err != nil {
 		nextOptions = []string{nextOptionsStr}
 	}
-	log.Printf("📋 [MCP] 下一步选项: %v", nextOptions)
+	debugLog("📋 [MCP] 下一步选项: %v", nextOptions)
 
 	// 创建渲染任务并发送到Render通道（供web端显示）
 	renderTask := RenderTask{
@@ -227,20 +249,20 @@ func humanInteractionHandler(ctx context.Context, req mcp.CallToolRequest) (*mcp
 	globalSessionManager.AddRenderTask(renderTask)
 	select {
 	case globalSessionManager.Render <- renderTask:
-		log.Println("📤 [MCP] 渲染任务已发送到Render通道")
+		debugLog("📤 [MCP] 渲染任务已发送到Render通道")
 	default:
-		log.Println("⚠️  [MCP] Render通道已满")
+		debugLog("⚠️  [MCP] Render通道已满")
 	}
 
 	// 阻塞等待用户响应
-	log.Println("⏳ [MCP] 等待用户响应...")
+	debugLog("⏳ [MCP] 等待用户响应...")
 	response := <-globalSessionManager.Out
-	log.Printf("✅ [MCP] 收到用户响应 | TaskID: %s | 输入: %s | 继续: %t", response.TaskId, response.CustomInput, response.Continue)
+	debugLog("✅ [MCP] 收到用户响应 | TaskID: %s | 输入: %s | 继续: %t", response.TaskId, response.CustomInput, response.Continue)
 
 	globalSessionManager.Taskmng.UpdateTask(response.TaskId, "processing", summary) // 更新任务状态为processing
 
 	duration := time.Since(startTime)
-	log.Printf("⏱️  [MCP] 人机交互请求处理完成 | 耗时: %v", duration)
+	debugLog("⏱️  [MCP] 人机交互请求处理完成 | 耗时: %v", duration)
 	// 构建返回结果
 	var aiPrompt string
 	if response.Continue {
