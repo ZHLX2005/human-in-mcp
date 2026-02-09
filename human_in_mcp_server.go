@@ -29,19 +29,21 @@ type RenderTask struct {
 
 // SessionManager 全局单例会话管理器
 type SessionManager struct {
-	Out       chan UserChoiceResponse // 用户响应通道
-	Render    chan RenderTask         // AI渲染任务通道（用于web端显示）
-	mu        sync.RWMutex            // 保护responses切片
-	responses []UserChoiceResponse    // 缓存已接收的响应
-	renderTasks []RenderTask          // 缓存AI渲染任务
+	Out            chan UserChoiceResponse // 用户响应通道
+	Render         chan RenderTask         // AI渲染任务通道（用于web端显示）
+	mu             sync.RWMutex            // 保护responses切片
+	responses      []UserChoiceResponse    // 缓存已接收的响应
+	renderTasks    []RenderTask            // 缓存AI渲染任务
+	processedTasks []ProcessedTask         // 已处理的任务
 }
 
 // 全局单例
 var globalSessionManager = &SessionManager{
-	Out:       make(chan UserChoiceResponse, 10),
-	Render:    make(chan RenderTask, 10),
-	responses: make([]UserChoiceResponse, 0, 10),
-	renderTasks: make([]RenderTask, 0, 10),
+	Out:            make(chan UserChoiceResponse, 10),
+	Render:         make(chan RenderTask, 10),
+	responses:      make([]UserChoiceResponse, 0, 10),
+	renderTasks:    make([]RenderTask, 0, 10),
+	processedTasks: make([]ProcessedTask, 0, 50),
 }
 
 // AddResponse 添加响应到队列
@@ -81,6 +83,20 @@ func (sm *SessionManager) PushResponse(resp UserChoiceResponse) {
 	}
 }
 
+// AddProcessedTask 添加已处理任务
+func (sm *SessionManager) AddProcessedTask(task ProcessedTask) {
+	sm.mu.Lock()
+	defer sm.mu.Unlock()
+	sm.processedTasks = append(sm.processedTasks, task)
+}
+
+// GetProcessedTasks 获取已处理任务列表
+func (sm *SessionManager) GetProcessedTasks() []ProcessedTask {
+	sm.mu.RLock()
+	defer sm.mu.RUnlock()
+	return sm.processedTasks
+}
+
 // HumanInTool 定义 MCP 工具
 func HumanInTool() mcp.Tool {
 	return mcp.NewTool(
@@ -103,7 +119,6 @@ func HumanInTool() mcp.Tool {
 • 收到返回结果后，务必按照"【重要指令】"执行`),
 		mcp.WithString("summary", mcp.Required(), mcp.Description("完成任务的简单总结")),
 		mcp.WithString("difficulties", mcp.Required(), mcp.Description("遇到的困难、需要的帮助或其他重要信息")),
-		mcp.WithString("conversationId", mcp.Required(), mcp.Description("对话ID，用于跟踪多轮对话，必须保持一致，可使用时间戳或UUID")),
 		mcp.WithString("nextOptions", mcp.Required(),
 			mcp.Description("接下来的任务可选项，JSON数组字符串格式，例如: [\"继续优化代码\", \"添加测试\", \"提交代码\", \"结束\"]")),
 	)
@@ -147,32 +162,18 @@ func humanInteractionHandler(ctx context.Context, req mcp.CallToolRequest) (*mcp
 【重要指令】
 1. 请立即执行上述用户任务
 2. 完成任务后，必须再次调用 human_interaction 工具向用户展示结果
-3. 调用时使用相同的 conversationId: %s
-4. 调用参数：
+3. 调用参数：
  • summary: 你完成任务的总结
  • difficulties: 遇到的问题或困难
- • conversationId: %s
  • nextOptions: 建议的下一步选项（JSON数组格式）
-
-【对话上下文】
-• 对话ID: %s
-• 当前是第 %d 轮交互
 
 请记住：这是持续对话循环，每次完成任务后都要调用 human_interaction 工具！`,
 			response.CustomInput,
-			conversationID,
-			conversationID,
-			conversationID,
-			1,
 		)
 	} else {
 		aiPrompt = fmt.Sprintf(`【对话结束】
 用户选择结束本次对话。
-
-对话ID: %s
-结束原因: %s
-
-请停止工作，不需要再调用任何工具。`, conversationID, response.CustomInput)
+请停止工作，不需要再调用任何工具。`)
 	}
 
 	// 返回结构化结果 + AI提示

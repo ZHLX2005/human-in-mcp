@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"strconv"
+	"time"
 )
 
 // TaskRequest 任务请求结构
@@ -15,6 +15,13 @@ type TaskRequest struct {
 	SelectedIndex  *int   `json:"selectedIndex"` // 可选，从AI选项中选择
 }
 
+// ProcessedTask 已处理的任务
+type ProcessedTask struct {
+	RenderTask
+	ProcessedAt time.Time `json:"processedAt"`
+	Response    string    `json:"response"`
+}
+
 // 启动HTTP服务器
 func StartTaskServer() {
 	// API路由
@@ -23,6 +30,7 @@ func StartTaskServer() {
 	http.HandleFunc("/api/tasks/list", handleListTasks)
 	http.HandleFunc("/api/render-tasks", handleRenderTasks)
 	http.HandleFunc("/api/render-tasks/select", handleSelectRenderTask)
+	http.HandleFunc("/api/processed-tasks", handleProcessedTasks)
 
 	fmt.Println("📝 任务管理页面: http://localhost:8094")
 	go http.ListenAndServe(":8094", nil)
@@ -45,10 +53,10 @@ func serveHomePage(w http.ResponseWriter, r *http.Request) {
             padding: 20px;
         }
         .container {
-            max-width: 1200px;
+            max-width: 1400px;
             margin: 0 auto;
             display: grid;
-            grid-template-columns: 1fr 1fr;
+            grid-template-columns: 1fr 1fr 1fr;
             gap: 20px;
         }
         .panel {
@@ -56,64 +64,47 @@ func serveHomePage(w http.ResponseWriter, r *http.Request) {
             border-radius: 12px;
             box-shadow: 0 2px 12px rgba(0,0,0,0.08);
             overflow: hidden;
+            display: flex;
+            flex-direction: column;
+            max-height: calc(100vh - 40px);
         }
         .header {
             background: #ffffff;
             color: #333;
-            padding: 20px;
+            padding: 16px 20px;
             text-align: center;
             border-bottom: 1px solid #e8e8e8;
+            flex-shrink: 0;
         }
         .header h2 {
-            font-size: 18px;
+            font-size: 16px;
             font-weight: 600;
             color: #1a1a1a;
         }
         .header p {
-            font-size: 12px;
+            font-size: 11px;
             color: #999;
-            margin-top: 5px;
+            margin-top: 4px;
         }
-        .content { padding: 20px; }
-        .tabs {
-            display: flex;
-            border-bottom: 1px solid #e8e8e8;
-            margin-bottom: 20px;
-        }
-        .tab {
+        .content {
+            padding: 16px;
+            overflow-y: auto;
             flex: 1;
-            padding: 12px;
-            text-align: center;
-            cursor: pointer;
-            font-size: 14px;
-            color: #666;
-            border-bottom: 2px solid transparent;
-            transition: all 0.2s;
         }
-        .tab:hover {
-            background: #fafafa;
-        }
-        .tab.active {
-            color: #333;
-            border-bottom-color: #333;
-            font-weight: 600;
-        }
-        .tab-content { display: none; }
-        .tab-content.active { display: block; }
-        .form-group { margin-bottom: 15px; }
+        .form-group { margin-bottom: 12px; }
         .form-group label {
             display: block;
-            margin-bottom: 6px;
+            margin-bottom: 5px;
             font-weight: 500;
             color: #333;
-            font-size: 13px;
+            font-size: 12px;
         }
         .form-group input, .form-group textarea, .form-group select {
             width: 100%;
-            padding: 10px;
+            padding: 8px 10px;
             border: 1px solid #e0e0e0;
             border-radius: 6px;
-            font-size: 13px;
+            font-size: 12px;
             transition: all 0.2s;
             background: #fafafa;
         }
@@ -123,21 +114,21 @@ func serveHomePage(w http.ResponseWriter, r *http.Request) {
             background: white;
         }
         .form-group textarea {
-            min-height: 80px;
+            min-height: 60px;
             resize: vertical;
         }
         .btn {
             width: 100%;
-            padding: 10px 20px;
+            padding: 8px 16px;
             border: 1px solid #e0e0e0;
             border-radius: 6px;
-            font-size: 13px;
+            font-size: 12px;
             font-weight: 500;
             cursor: pointer;
             transition: all 0.2s;
             background: white;
             color: #333;
-            margin-bottom: 10px;
+            margin-bottom: 8px;
         }
         .btn:hover {
             background: #f5f5f5;
@@ -152,50 +143,51 @@ func serveHomePage(w http.ResponseWriter, r *http.Request) {
             background: #555;
             border-color: #555;
         }
-        .btn-group { display: flex; gap: 8px; }
-        .btn-group .btn { margin-bottom: 0; }
-        .task-list h3, .render-list h3 {
-            font-size: 14px;
-            margin-bottom: 12px;
+        .list-header {
+            font-size: 13px;
+            margin-bottom: 10px;
             color: #333;
             font-weight: 600;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        .badge {
+            padding: 2px 8px;
+            font-size: 10px;
+            border-radius: 4px;
+            background: #f0f0f0;
+            color: #666;
         }
         .task-item, .render-item {
             background: #fafafa;
-            padding: 12px;
+            padding: 10px;
             border-radius: 6px;
-            margin-bottom: 8px;
+            margin-bottom: 6px;
             border-left: 3px solid #999;
+            font-size: 12px;
         }
         .task-item:hover, .render-item:hover {
             background: #f0f0f0;
         }
-        .task-item .task-id, .render-item .render-id {
-            font-size: 10px;
-            color: #999;
-            margin-bottom: 4px;
-            text-transform: uppercase;
-            letter-spacing: 0.5px;
-        }
-        .task-item .task-content, .render-item .summary {
-            font-size: 13px;
+        .task-content, .render-item .summary {
             color: #333;
-            margin-bottom: 6px;
-            line-height: 1.5;
+            margin-bottom: 4px;
+            line-height: 1.4;
         }
-        .task-item .task-meta, .render-item .render-meta {
-            font-size: 11px;
+        .task-meta, .render-meta {
+            font-size: 10px;
             color: #888;
         }
         .render-item .options {
             margin-top: 8px;
             display: flex;
             flex-wrap: wrap;
-            gap: 6px;
+            gap: 4px;
         }
         .option-btn {
-            padding: 4px 10px;
-            font-size: 11px;
+            padding: 3px 8px;
+            font-size: 10px;
             background: white;
             border: 1px solid #e0e0e0;
             border-radius: 4px;
@@ -207,18 +199,45 @@ func serveHomePage(w http.ResponseWriter, r *http.Request) {
             color: white;
             border-color: #333;
         }
-        .empty-state {
-            text-align: center;
-            padding: 30px;
-            color: #aaa;
-            font-size: 13px;
-        }
-        .message {
+        .processed-item {
+            background: #e8f5e9;
             padding: 10px;
             border-radius: 6px;
-            margin-bottom: 12px;
+            margin-bottom: 6px;
+            border-left: 3px solid #4caf50;
+            font-size: 12px;
+            opacity: 0.9;
+        }
+        .processed-item .summary {
+            color: #333;
+            margin-bottom: 4px;
+            line-height: 1.4;
+        }
+        .processed-item .response {
+            color: #2e7d32;
+            font-size: 11px;
+            padding: 4px 8px;
+            background: white;
+            border-radius: 4px;
+            margin-top: 4px;
+        }
+        .processed-item .timestamp {
+            font-size: 9px;
+            color: #888;
+            margin-top: 4px;
+        }
+        .empty-state {
+            text-align: center;
+            padding: 30px 20px;
+            color: #aaa;
+            font-size: 12px;
+        }
+        .message {
+            padding: 8px;
+            border-radius: 6px;
+            margin-bottom: 10px;
             display: none;
-            font-size: 13px;
+            font-size: 12px;
         }
         .message.success {
             background: #f0f5f0;
@@ -230,17 +249,9 @@ func serveHomePage(w http.ResponseWriter, r *http.Request) {
             color: #c62828;
             border: 1px solid #ffcdd2;
         }
-        .badge {
-            display: inline-block;
-            padding: 2px 8px;
-            font-size: 10px;
-            border-radius: 4px;
-            background: #f0f0f0;
-            color: #666;
-            margin-left: 8px;
-        }
-        @media (max-width: 768px) {
+        @media (max-width: 1200px) {
             .container { grid-template-columns: 1fr; }
+            .panel { max-height: none; }
         }
     </style>
 </head>
@@ -257,11 +268,6 @@ func serveHomePage(w http.ResponseWriter, r *http.Request) {
 
                 <form id="manualTaskForm">
                     <div class="form-group">
-                        <label for="manualConversationId">对话ID</label>
-                        <input type="text" id="manualConversationId" placeholder="例如: session-123" required>
-                    </div>
-
-                    <div class="form-group">
                         <label for="manualCustomInput">任务内容</label>
                         <textarea id="manualCustomInput" placeholder="请输入任务描述..." required></textarea>
                     </div>
@@ -277,16 +283,17 @@ func serveHomePage(w http.ResponseWriter, r *http.Request) {
                     <button type="submit" class="btn btn-primary">添加任务</button>
                 </form>
 
-                <div class="task-list">
-                    <h3>任务队列 <span id="taskCount" class="badge">0</span></h3>
-                    <div id="taskList">
-                        <div class="empty-state">暂无任务</div>
-                    </div>
+                <div class="list-header">
+                    <span>任务队列</span>
+                    <span id="taskCount" class="badge">0</span>
+                </div>
+                <div id="taskList">
+                    <div class="empty-state">暂无任务</div>
                 </div>
             </div>
         </div>
 
-        <!-- 右侧：AI渲染任务 -->
+        <!-- 中间：AI渲染任务 -->
         <div class="panel">
             <div class="header">
                 <h2>🤖 AI 渲染任务</h2>
@@ -295,11 +302,29 @@ func serveHomePage(w http.ResponseWriter, r *http.Request) {
             <div class="content">
                 <div id="renderMessage" class="message"></div>
 
-                <div class="render-list">
-                    <h3>待处理任务 <span id="renderCount" class="badge">0</span></h3>
-                    <div id="renderList">
-                        <div class="empty-state">暂无AI任务</div>
-                    </div>
+                <div class="list-header">
+                    <span>待处理任务</span>
+                    <span id="renderCount" class="badge">0</span>
+                </div>
+                <div id="renderList">
+                    <div class="empty-state">暂无AI任务</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 右侧：已处理任务 -->
+        <div class="panel">
+            <div class="header">
+                <h2>✅ 已处理任务</h2>
+                <p>查看已完成的交互</p>
+            </div>
+            <div class="content">
+                <div class="list-header">
+                    <span>已完成</span>
+                    <span id="processedCount" class="badge">0</span>
+                </div>
+                <div id="processedList">
+                    <div class="empty-state">暂无已完成任务</div>
                 </div>
             </div>
         </div>
@@ -309,10 +334,9 @@ func serveHomePage(w http.ResponseWriter, r *http.Request) {
         // 手动任务表单
         document.getElementById('manualTaskForm').addEventListener('submit', async (e) => {
             e.preventDefault();
-            const messageEl = document.getElementById('manualMessage');
 
             const task = {
-                conversationId: document.getElementById('manualConversationId').value,
+                conversationId: 'manual-' + Date.now(),
                 customInput: document.getElementById('manualCustomInput').value,
                 continue: document.getElementById('manualContinueTask').value === 'true'
             };
@@ -328,6 +352,7 @@ func serveHomePage(w http.ResponseWriter, r *http.Request) {
                     showMessage('manualMessage', '任务添加成功！', 'success');
                     document.getElementById('manualTaskForm').reset();
                     loadTasks();
+                    loadProcessedTasks();
                 } else {
                     showMessage('manualMessage', '添加失败：' + (await response.text()), 'error');
                 }
@@ -350,9 +375,8 @@ func serveHomePage(w http.ResponseWriter, r *http.Request) {
                 } else {
                     taskList.innerHTML = tasks.map((task, index) => {
                         return '<div class="task-item">' +
-                            '<div class="task-id">#' + (index + 1) + ' | ' + task.conversationId + '</div>' +
                             '<div class="task-content">' + escapeHtml(task.customInput) + '</div>' +
-                            '<div class="task-meta">类型: ' + (task.continue ? '继续任务' : '结束对话') + '</div>' +
+                            '<div class="task-meta">类型: ' + (task.continue ? '继续' : '结束') + '</div>' +
                             '</div>';
                     }).join('');
                 }
@@ -378,15 +402,14 @@ func serveHomePage(w http.ResponseWriter, r *http.Request) {
                         if (task.nextOptions && task.nextOptions.length > 0) {
                             optionsHtml = '<div class="options">';
                             task.nextOptions.forEach((opt, i) => {
-                                optionsHtml += '<button class="option-btn" onclick="selectOption(\'' + task.conversationId + '\', ' + i + ')">[' + (i + 1) + '] ' + escapeHtml(opt.substring(0, 20)) + '</button>';
+                                optionsHtml += '<button class="option-btn" onclick="selectOption(\'' + task.conversationId + '\', ' + i + ', \'' + escapeHtml(opt).replace(/'/g, "\\'") + '\')">[' + (i + 1) + '] ' + escapeHtml(opt.substring(0, 15)) + '</button>';
                             });
-                            optionsHtml += '<button class="option-btn" onclick="showCustomInput(\'' + task.conversationId + '\')">[自定义]</button>';
-                            optionsHtml += '<button class="option-btn" onclick="endChat(\'' + task.conversationId + '\')">[结束]</button>';
+                            optionsHtml += '<button class="option-btn" onclick="showCustomInput(\'' + task.conversationId + '\')">自定义</button>';
+                            optionsHtml += '<button class="option-btn" onclick="endChat(\'' + task.conversationId + '\')">结束</button>';
                             optionsHtml += '</div>';
                         }
 
                         return '<div class="render-item">' +
-                            '<div class="render-id">' + task.conversationId + '</div>' +
                             '<div class="summary">' + escapeHtml(task.summary) + '</div>' +
                             (task.difficulties && task.difficulties !== '无' ? '<div class="render-meta">⚠️ ' + escapeHtml(task.difficulties) + '</div>' : '') +
                             optionsHtml +
@@ -398,8 +421,36 @@ func serveHomePage(w http.ResponseWriter, r *http.Request) {
             }
         }
 
+        // 加载已处理任务
+        async function loadProcessedTasks() {
+            try {
+                const response = await fetch('/api/processed-tasks');
+                const tasks = await response.json();
+
+                const processedList = document.getElementById('processedList');
+                document.getElementById('processedCount').textContent = tasks.length;
+
+                if (tasks.length === 0) {
+                    processedList.innerHTML = '<div class="empty-state">暂无已完成任务</div>';
+                } else {
+                    processedList.innerHTML = tasks.map(task => {
+                        const date = new Date(task.processedAt);
+                        const timeStr = date.toLocaleTimeString();
+                        return '<div class="processed-item">' +
+                            '<div class="summary">' + escapeHtml(task.summary) + '</div>' +
+                            (task.difficulties && task.difficulties !== '无' ? '<div class="render-meta">⚠️ ' + escapeHtml(task.difficulties) + '</div>' : '') +
+                            '<div class="response">↳ ' + escapeHtml(task.response) + '</div>' +
+                            '<div class="timestamp">' + timeStr + '</div>' +
+                            '</div>';
+                    }).join('');
+                }
+            } catch (error) {
+                console.error('加载已处理任务失败:', error);
+            }
+        }
+
         // 选择AI选项
-        async function selectOption(conversationId, index) {
+        async function selectOption(conversationId, index, optionText) {
             const task = {
                 conversationId: conversationId,
                 selectedIndex: index,
@@ -415,14 +466,14 @@ func serveHomePage(w http.ResponseWriter, r *http.Request) {
                 });
 
                 if (response.ok) {
-                    showMessage('renderMessage', '已选择选项！', 'success');
+                    showMessage('renderMessage', '已选择: ' + optionText, 'success');
                     loadRenderTasks();
-                    loadTasks();
+                    loadProcessedTasks();
                 } else {
-                    showMessage('renderMessage', '选择失败：' + (await response.text()), 'error');
+                    showMessage('renderMessage', '选择失败', 'error');
                 }
             } catch (error) {
-                showMessage('renderMessage', '网络错误：' + error.message, 'error');
+                showMessage('renderMessage', '网络错误', 'error');
             }
         }
 
@@ -444,11 +495,9 @@ func serveHomePage(w http.ResponseWriter, r *http.Request) {
                 body: JSON.stringify(task)
             }).then(response => {
                 if (response.ok) {
-                    showMessage('renderMessage', '已提交自定义输入！', 'success');
+                    showMessage('renderMessage', '已提交', 'success');
                     loadRenderTasks();
-                    loadTasks();
-                } else {
-                    showMessage('renderMessage', '提交失败', 'error');
+                    loadProcessedTasks();
                 }
             });
         }
@@ -458,7 +507,7 @@ func serveHomePage(w http.ResponseWriter, r *http.Request) {
             const task = {
                 conversationId: conversationId,
                 continue: false,
-                customInput: '用户选择结束对话'
+                customInput: '结束对话'
             };
 
             try {
@@ -469,14 +518,12 @@ func serveHomePage(w http.ResponseWriter, r *http.Request) {
                 });
 
                 if (response.ok) {
-                    showMessage('renderMessage', '已结束对话！', 'success');
+                    showMessage('renderMessage', '已结束对话', 'success');
                     loadRenderTasks();
-                    loadTasks();
-                } else {
-                    showMessage('renderMessage', '操作失败：' + (await response.text()), 'error');
+                    loadProcessedTasks();
                 }
             } catch (error) {
-                showMessage('renderMessage', '网络错误：' + error.message, 'error');
+                showMessage('renderMessage', '操作失败', 'error');
             }
         }
 
@@ -485,7 +532,7 @@ func serveHomePage(w http.ResponseWriter, r *http.Request) {
             message.textContent = text;
             message.className = 'message ' + type;
             message.style.display = 'block';
-            setTimeout(() => { message.style.display = 'none'; }, 3000);
+            setTimeout(() => { message.style.display = 'none'; }, 2000);
         }
 
         function escapeHtml(text) {
@@ -497,11 +544,13 @@ func serveHomePage(w http.ResponseWriter, r *http.Request) {
         // 页面加载时获取数据
         loadTasks();
         loadRenderTasks();
-        // 每3秒自动刷新
+        loadProcessedTasks();
+        // 每2秒自动刷新
         setInterval(() => {
             loadTasks();
             loadRenderTasks();
-        }, 3000);
+            loadProcessedTasks();
+        }, 2000);
     </script>
 </body>
 </html>`
@@ -523,8 +572,8 @@ func handleTasks(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// 验证必填字段
-	if task.ConversationID == "" || task.CustomInput == "" {
-		http.Error(w, "conversationId and customInput are required", http.StatusBadRequest)
+	if task.CustomInput == "" {
+		http.Error(w, "customInput is required", http.StatusBadRequest)
 		return
 	}
 
@@ -557,6 +606,12 @@ func handleRenderTasks(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(globalSessionManager.GetRenderTasks())
 }
 
+// handleProcessedTasks 返回已处理任务列表
+func handleProcessedTasks(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(globalSessionManager.GetProcessedTasks())
+}
+
 // handleSelectRenderTask 处理从AI渲染任务中选择选项
 func handleSelectRenderTask(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
@@ -579,12 +634,10 @@ func handleSelectRenderTask(w http.ResponseWriter, r *http.Request) {
 	// 获取渲染任务
 	renderTasks := globalSessionManager.GetRenderTasks()
 	var targetTask *RenderTask
-	var taskIndex int
 
-	for i, task := range renderTasks {
+	for _, task := range renderTasks {
 		if task.ConversationID == req.ConversationID {
 			targetTask = &task
-			taskIndex = i
 			break
 		}
 	}
@@ -601,26 +654,30 @@ func handleSelectRenderTask(w http.ResponseWriter, r *http.Request) {
 		SelectedIndex:  -1,
 	}
 
+	var responseText string
 	if req.SelectedIndex != nil && *req.SelectedIndex >= 0 && *req.SelectedIndex < len(targetTask.NextOptions) {
-		// 从AI选项中选择
 		response.SelectedIndex = *req.SelectedIndex
-		response.CustomInput = targetTask.NextOptions[*req.SelectedIndex]
+		responseText = targetTask.NextOptions[*req.SelectedIndex]
 	} else if req.CustomInput != "" {
-		// 自定义输入
-		response.CustomInput = req.CustomInput
-		response.SelectedIndex = -1
+		responseText = req.CustomInput
 	} else {
-		// 结束对话
-		response.CustomInput = "用户选择结束对话"
+		responseText = "结束对话"
 	}
+	response.CustomInput = responseText
 
 	// 发送到Out通道
 	globalSessionManager.PushResponse(response)
 
+	// 添加到已处理任务
+	globalSessionManager.AddProcessedTask(ProcessedTask{
+		RenderTask:  *targetTask,
+		ProcessedAt: time.Now(),
+		Response:    responseText,
+	})
+
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]interface{}{
+	json.NewEncoder(w).Encode(map[string]string{
 		"status":  "success",
 		"message": "Response sent",
-		"index":   strconv.Itoa(taskIndex),
 	})
 }
