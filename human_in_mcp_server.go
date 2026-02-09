@@ -12,10 +12,10 @@ import (
 )
 
 type TaskStatus struct {
-	taskId string
-	status string // pending, processing, completed
-	req    string // 原始的请求
-	resp   string // 响应之后携带的summary
+	TaskId string `json:"taskId"`
+	Status string `json:"status"` // pending, processing, completed
+	Req    string `json:"req"`    // 原始的请求
+	Resp   string `json:"resp"`   // 响应之后携带的summary
 }
 type TaskManager struct {
 	mu    sync.RWMutex
@@ -32,9 +32,9 @@ func (tm *TaskManager) AddTask(taskId, req string) {
 	tm.mu.Lock()
 	defer tm.mu.Unlock()
 	tm.tasks[taskId] = &TaskStatus{
-		taskId: taskId,
-		status: "pending",
-		req:    req,
+		TaskId: taskId,
+		Status: "pending",
+		Req:    req,
 	}
 }
 
@@ -42,8 +42,8 @@ func (tm *TaskManager) UpdateTask(taskId, status, resp string) {
 	tm.mu.Lock()
 	defer tm.mu.Unlock()
 	if task, exists := tm.tasks[taskId]; exists {
-		task.status = status
-		task.resp = resp
+		task.Status = status
+		task.Resp = resp
 	}
 }
 
@@ -52,6 +52,17 @@ func (tm *TaskManager) GetTask(taskId string) (*TaskStatus, bool) {
 	defer tm.mu.RUnlock()
 	task, exists := tm.tasks[taskId]
 	return task, exists
+}
+
+func (tm *TaskManager) GetAllTasks() []*TaskStatus {
+	tm.mu.RLock()
+	defer tm.mu.RUnlock()
+
+	tasks := make([]*TaskStatus, 0, len(tm.tasks))
+	for _, task := range tm.tasks {
+		tasks = append(tasks, task)
+	}
+	return tasks
 }
 
 // UserChoiceResponse 用户的选择响应
@@ -76,6 +87,7 @@ type SessionManager struct {
 	mu          sync.RWMutex            // 保护responses切片
 	responses   []UserChoiceResponse    // 缓存已接收的响应
 	renderTasks []RenderTask            // 缓存AI渲染任务
+
 	//=====  -- 所有开放的对象都等于SessionManager的相关调用
 	Taskmng *TaskManager // 任务管理器
 

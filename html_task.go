@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"time"
 )
 
 // TaskRequest 任务请求结构
@@ -14,22 +13,15 @@ type TaskRequest struct {
 	SelectedIndex *int   `json:"selectedIndex"` // 可选，从AI选项中选择
 }
 
-// ProcessedTask 已处理的任务
-type ProcessedTask struct {
-	RenderTask
-	ProcessedAt time.Time `json:"processedAt"`
-	Response    string    `json:"response"`
-}
-
 // 启动HTTP服务器
 func StartTaskServer() {
 	// API路由
 	http.HandleFunc("/", serveHomePage)
 	http.HandleFunc("/api/tasks", handleTasks)
 	http.HandleFunc("/api/tasks/list", handleListTasks)
+	http.HandleFunc("/api/tasks/status", handleTaskStatus) // 获取任务状态
 	http.HandleFunc("/api/render-tasks", handleRenderTasks)
 	http.HandleFunc("/api/render-tasks/select", handleSelectRenderTask)
-	http.HandleFunc("/api/processed-tasks", handleProcessedTasks)
 
 	fmt.Println("📝 任务管理页面: http://localhost:8094")
 	go http.ListenAndServe(":8094", nil)
@@ -52,7 +44,7 @@ func serveHomePage(w http.ResponseWriter, r *http.Request) {
             padding: 20px;
         }
         .container {
-            max-width: 1400px;
+            max-width: 1200px;
             margin: 0 auto;
             display: grid;
             grid-template-columns: 1fr 1fr 1fr;
@@ -225,6 +217,64 @@ func serveHomePage(w http.ResponseWriter, r *http.Request) {
             color: #888;
             margin-top: 4px;
         }
+        .status-item {
+            background: #f8f9fa;
+            padding: 10px;
+            border-radius: 6px;
+            margin-bottom: 6px;
+            border-left: 3px solid #6c757d;
+            font-size: 12px;
+        }
+        .status-item.pending {
+            border-left-color: #ffc107;
+            background: #fff8e1;
+        }
+        .status-item.processing {
+            border-left-color: #2196f3;
+            background: #e3f2fd;
+        }
+        .status-item.completed {
+            border-left-color: #4caf50;
+            background: #e8f5e9;
+        }
+        .status-item .task-id {
+            font-size: 9px;
+            color: #888;
+            margin-bottom: 4px;
+        }
+        .status-item .task-req {
+            color: #333;
+            margin-bottom: 4px;
+            line-height: 1.4;
+        }
+        .status-item .task-resp {
+            color: #2e7d32;
+            font-size: 11px;
+            padding: 4px 8px;
+            background: white;
+            border-radius: 4px;
+            margin-top: 4px;
+        }
+        .status-badge {
+            display: inline-block;
+            padding: 2px 8px;
+            font-size: 9px;
+            border-radius: 4px;
+            font-weight: 500;
+            margin-bottom: 4px;
+        }
+        .status-badge.pending {
+            background: #ffc107;
+            color: #333;
+        }
+        .status-badge.processing {
+            background: #2196f3;
+            color: white;
+        }
+        .status-badge.completed {
+            background: #4caf50;
+            color: white;
+        }
         .empty-state {
             text-align: center;
             padding: 30px 20px;
@@ -311,19 +361,19 @@ func serveHomePage(w http.ResponseWriter, r *http.Request) {
             </div>
         </div>
 
-        <!-- 右侧：已处理任务 -->
+        <!-- 右侧：任务状态 -->
         <div class="panel">
             <div class="header">
-                <h2>✅ 已处理任务</h2>
-                <p>查看已完成的交互</p>
+                <h2>📊 任务状态</h2>
+                <p>实时追踪任务进度</p>
             </div>
             <div class="content">
                 <div class="list-header">
-                    <span>已完成</span>
-                    <span id="processedCount" class="badge">0</span>
+                    <span>全部任务</span>
+                    <span id="statusCount" class="badge">0</span>
                 </div>
-                <div id="processedList">
-                    <div class="empty-state">暂无已完成任务</div>
+                <div id="statusList">
+                    <div class="empty-state">暂无任务状态</div>
                 </div>
             </div>
         </div>
@@ -350,7 +400,7 @@ func serveHomePage(w http.ResponseWriter, r *http.Request) {
                     showMessage('manualMessage', '任务添加成功！', 'success');
                     document.getElementById('manualTaskForm').reset();
                     loadTasks();
-                    loadProcessedTasks();
+                    loadTaskStatus();
                 } else {
                     showMessage('manualMessage', '添加失败：' + (await response.text()), 'error');
                 }
@@ -419,31 +469,49 @@ func serveHomePage(w http.ResponseWriter, r *http.Request) {
             }
         }
 
-        // 加载已处理任务
-        async function loadProcessedTasks() {
+        // 加载任务状态
+        async function loadTaskStatus() {
             try {
-                const response = await fetch('/api/processed-tasks');
+                const response = await fetch('/api/tasks/status');
                 const tasks = await response.json();
 
-                const processedList = document.getElementById('processedList');
-                document.getElementById('processedCount').textContent = tasks.length;
+                const statusList = document.getElementById('statusList');
+                document.getElementById('statusCount').textContent = tasks.length;
 
                 if (tasks.length === 0) {
-                    processedList.innerHTML = '<div class="empty-state">暂无已完成任务</div>';
+                    statusList.innerHTML = '<div class="empty-state">暂无任务状态</div>';
                 } else {
-                    processedList.innerHTML = tasks.map(task => {
-                        const date = new Date(task.processedAt);
-                        const timeStr = date.toLocaleTimeString();
-                        return '<div class="processed-item">' +
-                            '<div class="summary">' + escapeHtml(task.summary) + '</div>' +
-                            (task.difficulties && task.difficulties !== '无' ? '<div class="render-meta">⚠️ ' + escapeHtml(task.difficulties) + '</div>' : '') +
-                            '<div class="response">↳ ' + escapeHtml(task.response) + '</div>' +
-                            '<div class="timestamp">' + timeStr + '</div>' +
+                    statusList.innerHTML = tasks.map(task => {
+                        let statusBadge = '';
+                        switch(task.status) {
+                            case 'pending':
+                                statusBadge = '<span class="status-badge pending">等待中</span>';
+                                break;
+                            case 'processing':
+                                statusBadge = '<span class="status-badge processing">处理中</span>';
+                                break;
+                            case 'completed':
+                                statusBadge = '<span class="status-badge completed">已完成</span>';
+                                break;
+                            default:
+                                statusBadge = '<span class="status-badge">' + task.status + '</span>';
+                        }
+
+                        let respHtml = '';
+                        if (task.resp && task.resp !== '') {
+                            respHtml = '<div class="task-resp">↳ ' + escapeHtml(task.resp) + '</div>';
+                        }
+
+                        return '<div class="status-item ' + task.status + '">' +
+                            '<div class="task-id">ID: ' + escapeHtml(task.taskId) + '</div>' +
+                            statusBadge +
+                            '<div class="task-req">' + escapeHtml(task.req) + '</div>' +
+                            respHtml +
                             '</div>';
                     }).join('');
                 }
             } catch (error) {
-                console.error('加载已处理任务失败:', error);
+                console.error('加载任务状态失败:', error);
             }
         }
 
@@ -465,7 +533,7 @@ func serveHomePage(w http.ResponseWriter, r *http.Request) {
                 if (response.ok) {
                     showMessage('renderMessage', '已选择: ' + optionText, 'success');
                     loadRenderTasks();
-                    loadProcessedTasks();
+                    loadTaskStatus();
                 } else {
                     showMessage('renderMessage', '选择失败', 'error');
                 }
@@ -493,7 +561,7 @@ func serveHomePage(w http.ResponseWriter, r *http.Request) {
                 if (response.ok) {
                     showMessage('renderMessage', '已提交', 'success');
                     loadRenderTasks();
-                    loadProcessedTasks();
+                    loadTaskStatus();
                 }
             });
         }
@@ -515,7 +583,7 @@ func serveHomePage(w http.ResponseWriter, r *http.Request) {
                 if (response.ok) {
                     showMessage('renderMessage', '已结束对话', 'success');
                     loadRenderTasks();
-                    loadProcessedTasks();
+                    loadTaskStatus();
                 }
             } catch (error) {
                 showMessage('renderMessage', '操作失败', 'error');
@@ -539,12 +607,12 @@ func serveHomePage(w http.ResponseWriter, r *http.Request) {
         // 页面加载时获取数据
         loadTasks();
         loadRenderTasks();
-        loadProcessedTasks();
+        loadTaskStatus();
         // 每2秒自动刷新
         setInterval(() => {
             loadTasks();
             loadRenderTasks();
-            loadProcessedTasks();
+            loadTaskStatus();
         }, 2000);
     </script>
 </body>
@@ -600,12 +668,6 @@ func handleRenderTasks(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(globalSessionManager.GetRenderTasks())
 }
 
-// handleProcessedTasks 返回已处理任务列表
-func handleProcessedTasks(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(globalSessionManager.GetProcessedTasks())
-}
-
 // handleSelectRenderTask 处理从AI渲染任务中选择选项
 func handleSelectRenderTask(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
@@ -652,16 +714,18 @@ func handleSelectRenderTask(w http.ResponseWriter, r *http.Request) {
 	// 发送到Out通道
 	globalSessionManager.PushResponse(response)
 
-	// 添加到已处理任务
-	globalSessionManager.AddProcessedTask(ProcessedTask{
-		RenderTask:   targetTask,
-		ProcessedAt:  time.Now(),
-		Response:     responseText,
-	})
-
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]string{
 		"status":  "success",
 		"message": "Response sent",
 	})
+}
+
+// handleTaskStatus 返回任务状态列表
+func handleTaskStatus(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+
+	// 从 TaskManager 获取所有任务状态
+	tasks := globalSessionManager.Taskmng.GetAllTasks()
+	json.NewEncoder(w).Encode(tasks)
 }
