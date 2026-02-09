@@ -16,4 +16,4 @@ claude mcp add --transport sse --scope user human-in-mcp http://localhost:8093/s
 
 请使用mcp当中 human-in-mcp 的  human_interaction工具
 
-claude --dangerously-skip-permissions
+claude --dangerously-skip-permissions 请使用mcp当中human-in-mcp的 human_interaction工具
