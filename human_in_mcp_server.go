@@ -30,57 +30,71 @@ type TaskStatus struct {
 	Req    string `json:"req"`    // 原始的请求
 	Resp   string `json:"resp"`   // 响应之后携带的summary
 }
+
 type TaskManager struct {
 	mu    sync.RWMutex
-	tasks map[string]*TaskStatus
+	tasks []*TaskStatus // 使用slice保持添加顺序
 }
 
 func NewTaskManager() *TaskManager {
 	debugLog("📋 [TaskManager] 初始化任务管理器")
 	return &TaskManager{
-		tasks: make(map[string]*TaskStatus),
+		tasks: make([]*TaskStatus, 0),
 	}
 }
 
 func (tm *TaskManager) AddTask(taskId, req string) {
 	tm.mu.Lock()
 	defer tm.mu.Unlock()
-	tm.tasks[taskId] = &TaskStatus{
+	// 检查是否已存在（避免重复）
+	for _, task := range tm.tasks {
+		if task.TaskId == taskId {
+			debugLog("⚠️  [TaskManager] 任务已存在，跳过添加 | ID: %s", taskId)
+			return
+		}
+	}
+	// 添加新任务到末尾
+	tm.tasks = append(tm.tasks, &TaskStatus{
 		TaskId: taskId,
 		Status: "pending",
 		Req:    req,
-	}
+	})
 	debugLog("✅ [TaskManager] 新建任务 | ID: %s | 状态: pending | 请求: %s", taskId, req)
 }
 
 func (tm *TaskManager) UpdateTask(taskId, status, resp string) {
 	tm.mu.Lock()
 	defer tm.mu.Unlock()
-	if task, exists := tm.tasks[taskId]; exists {
-		oldStatus := task.Status
-		task.Status = status
-		task.Resp = resp
-		debugLog("🔄 [TaskManager] 更新任务 | ID: %s | %s -> %s | 响应: %s", taskId, oldStatus, status, resp)
-	} else {
-		debugLog("⚠️  [TaskManager] 任务不存在，无法更新 | ID: %s", taskId)
+	for _, task := range tm.tasks {
+		if task.TaskId == taskId {
+			oldStatus := task.Status
+			task.Status = status
+			task.Resp = resp
+			debugLog("🔄 [TaskManager] 更新任务 | ID: %s | %s -> %s | 响应: %s", taskId, oldStatus, status, resp)
+			return
+		}
 	}
+	debugLog("⚠️  [TaskManager] 任务不存在，无法更新 | ID: %s", taskId)
 }
 
 func (tm *TaskManager) GetTask(taskId string) (*TaskStatus, bool) {
 	tm.mu.RLock()
 	defer tm.mu.RUnlock()
-	task, exists := tm.tasks[taskId]
-	return task, exists
+	for _, task := range tm.tasks {
+		if task.TaskId == taskId {
+			return task, true
+		}
+	}
+	return nil, false
 }
 
 func (tm *TaskManager) GetAllTasks() []*TaskStatus {
 	tm.mu.RLock()
 	defer tm.mu.RUnlock()
 
-	tasks := make([]*TaskStatus, 0, len(tm.tasks))
-	for _, task := range tm.tasks {
-		tasks = append(tasks, task)
-	}
+	// 直接返回slice的副本，保持添加顺序
+	tasks := make([]*TaskStatus, len(tm.tasks))
+	copy(tasks, tm.tasks)
 	return tasks
 }
 
