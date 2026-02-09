@@ -11,11 +11,47 @@ import (
 	"github.com/mark3labs/mcp-go/server"
 )
 
-type TaskStatusCtr struct {
+type TaskStatus struct {
 	taskId string
 	status string // pending, processing, completed
 	req    string // 原始的请求
 	resp   string // 响应之后携带的summary
+}
+type TaskManager struct {
+	mu    sync.RWMutex
+	tasks map[string]*TaskStatus
+}
+
+func NewTaskManager() *TaskManager {
+	return &TaskManager{
+		tasks: make(map[string]*TaskStatus),
+	}
+}
+
+func (tm *TaskManager) AddTask(taskId, req string) {
+	tm.mu.Lock()
+	defer tm.mu.Unlock()
+	tm.tasks[taskId] = &TaskStatus{
+		taskId: taskId,
+		status: "pending",
+		req:    req,
+	}
+}
+
+func (tm *TaskManager) UpdateTask(taskId, status, resp string) {
+	tm.mu.Lock()
+	defer tm.mu.Unlock()
+	if task, exists := tm.tasks[taskId]; exists {
+		task.status = status
+		task.resp = resp
+	}
+}
+
+func (tm *TaskManager) GetTask(taskId string) (*TaskStatus, bool) {
+	tm.mu.RLock()
+	defer tm.mu.RUnlock()
+	task, exists := tm.tasks[taskId]
+	return task, exists
 }
 
 // UserChoiceResponse 用户的选择响应
@@ -35,21 +71,23 @@ type RenderTask struct {
 
 // SessionManager 全局单例会话管理器
 type SessionManager struct {
-	Out            chan UserChoiceResponse // 用户响应通道
-	Render         chan RenderTask         // AI渲染任务通道（用于web端显示）
-	mu             sync.RWMutex            // 保护responses切片
-	responses      []UserChoiceResponse    // 缓存已接收的响应
-	renderTasks    []RenderTask            // 缓存AI渲染任务
-	processedTasks []ProcessedTask         // 已处理的任务
+	Out         chan UserChoiceResponse // 用户响应通道
+	Render      chan RenderTask         // AI渲染任务通道（用于web端显示）
+	mu          sync.RWMutex            // 保护responses切片
+	responses   []UserChoiceResponse    // 缓存已接收的响应
+	renderTasks []RenderTask            // 缓存AI渲染任务
+	//=====  -- 所有开放的对象都等于SessionManager的相关调用
+	Taskmng *TaskManager // 任务管理器
+
 }
 
 // 全局单例
 var globalSessionManager = &SessionManager{
-	Out:            make(chan UserChoiceResponse, 10),
-	Render:         make(chan RenderTask, 10),
-	responses:      make([]UserChoiceResponse, 0, 10),
-	renderTasks:    make([]RenderTask, 0, 10),
-	processedTasks: make([]ProcessedTask, 0, 50),
+	Out:         make(chan UserChoiceResponse, 10),
+	Render:      make(chan RenderTask, 10),
+	responses:   make([]UserChoiceResponse, 0, 10),
+	renderTasks: make([]RenderTask, 0, 10),
+	Taskmng:     NewTaskManager(),
 }
 
 // AddResponse 添加响应到队列
@@ -85,24 +123,13 @@ func (sm *SessionManager) GetRenderTasks() []RenderTask {
 func (sm *SessionManager) PushResponse(resp UserChoiceResponse) {
 	resp.TaskId = insIdGen() // 生成唯一任务ID
 	sm.AddResponse(resp)
+
+	sm.Taskmng.AddTask(resp.TaskId, resp.CustomInput) // 将任务添加到任务管理器
+
 	select {
 	case sm.Out <- resp:
 	default:
 	}
-}
-
-// AddProcessedTask 添加已处理任务
-func (sm *SessionManager) AddProcessedTask(task ProcessedTask) {
-	sm.mu.Lock()
-	defer sm.mu.Unlock()
-	sm.processedTasks = append(sm.processedTasks, task)
-}
-
-// GetProcessedTasks 获取已处理任务列表
-func (sm *SessionManager) GetProcessedTasks() []ProcessedTask {
-	sm.mu.RLock()
-	defer sm.mu.RUnlock()
-	return sm.processedTasks
 }
 
 // HumanInTool 定义 MCP 工具
@@ -133,9 +160,12 @@ func HumanInTool() mcp.Tool {
 	)
 }
 
-func process(id string) {
+func process(sm *SessionManager, id, summary string) {
+
 	if id != "" {
 		fmt.Printf("Received task with ID: %s\n", id)
+
+		sm.Taskmng.UpdateTask(id, "completed", summary)
 	}
 
 }
@@ -147,7 +177,7 @@ func humanInteractionHandler(ctx context.Context, req mcp.CallToolRequest) (*mcp
 	difficulties, _ := req.RequireString("difficulties")
 	nextOptionsStr, _ := req.RequireString("nextOptions")
 	id, _ := req.RequireString("taskId")
-	process(id)
+	process(globalSessionManager, id, summary)
 
 	var nextOptions []string
 	if err := json.Unmarshal([]byte(nextOptionsStr), &nextOptions); err != nil {
@@ -169,6 +199,7 @@ func humanInteractionHandler(ctx context.Context, req mcp.CallToolRequest) (*mcp
 	// 阻塞等待用户响应
 	response := <-globalSessionManager.Out
 
+	globalSessionManager.Taskmng.UpdateTask(response.TaskId, "processing", summary) // 更新任务状态为processing
 	// 构建返回结果
 	var aiPrompt string
 	if response.Continue {
