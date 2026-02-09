@@ -236,8 +236,8 @@ func HumanInTool() mcp.Tool {
 注意事项：
 • 这是一个持续循环，直到用户明确选择结束
 • 收到返回结果后，务必按照"【重要指令】"执行`),
-		mcp.WithString("summary", mcp.Required(), mcp.Description("完成任务的简单总结")),
-		mcp.WithString("taskId", mcp.Description("插件内部提供的唯一任务Id,对于完成的每个任务都会生成一个唯一的任务Id，AI可以通过这个Id来追踪和管理任务的状态 , 如果没有对话历史,传值不做要求")),
+		mcp.WithString("summary", mcp.Required(), mcp.Description("完成任务的简单总结,如果处于起步或初始化状态,直接传递当前工作目录地址即可")),
+		mcp.WithString("taskId", mcp.Description("插件内部提供的唯一任务Id,必须通过该系统内部进行指定,对于完成的每个任务都会生成一个唯一的任务Id , 如果没有对话历史或处于起步或初始化状态,传值不做要求")),
 
 		mcp.WithString("difficulties", mcp.Required(), mcp.Description("遇到的困难、需要的帮助或其他重要信息")),
 		mcp.WithString("nextOptions", mcp.Required(),

@@ -333,6 +333,28 @@ func serveHomePage(w http.ResponseWriter, r *http.Request) {
 
                     <button type="submit" class="btn btn-primary">添加任务</button>
                 </form>
+
+                <div style="margin-top: 16px; padding-top: 16px; border-top: 1px solid #e0e0e0;">
+                    <div style="display: flex; gap: 8px; align-items: center; margin-bottom: 8px;">
+                        <label style="font-weight: 500; color: #333; font-size: 12px;">导入历史任务</label>
+                    </div>
+                    <input type="file" id="importFile" accept=".json" style="display: none;" onchange="handleFileSelect(event)">
+                    <div id="dropZone"
+                         style="border: 2px dashed #ccc; border-radius: 6px; padding: 20px; text-align: center; cursor: pointer; transition: all 0.2s; background: #fafafa;"
+                         onclick="document.getElementById('importFile').click()"
+                         ondragover="handleDragOver(event)"
+                         ondragleave="handleDragLeave(event)"
+                         ondrop="handleDrop(event)">
+                        <div style="font-size: 24px; margin-bottom: 8px;">📁</div>
+                        <div style="font-size: 12px; color: #666;">拖放JSON文件到此处</div>
+                        <div style="font-size: 10px; color: #999; margin-top: 4px;">或点击选择文件</div>
+                    </div>
+                    <div id="importTasksList" style="margin-top: 12px; display: none;">
+                        <div style="font-size: 11px; color: #666; margin-bottom: 8px;">选择要导入的任务：</div>
+                        <div id="importTasksItems" style="max-height: 200px; overflow-y: auto;"></div>
+                        <button class="btn btn-primary" onclick="importSelectedTasks()" style="margin-top: 8px;">导入选中的任务</button>
+                    </div>
+                </div>
             </div>
         </div>
 
@@ -364,7 +386,10 @@ func serveHomePage(w http.ResponseWriter, r *http.Request) {
             <div class="content">
                 <div class="list-header">
                     <span>全部任务</span>
-                    <span id="statusCount" class="badge">0</span>
+                    <div style="display: flex; gap: 8px; align-items: center;">
+                        <button class="btn" onclick="exportTasks()" style="padding: 4px 8px; font-size: 10px; margin-bottom: 0;">导出</button>
+                        <span id="statusCount" class="badge">0</span>
+                    </div>
                 </div>
                 <div id="statusList">
                     <div class="empty-state">暂无任务状态</div>
@@ -587,12 +612,8 @@ func serveHomePage(w http.ResponseWriter, r *http.Request) {
             }
         }
 
-        // 遗弃任务
+        // 遗弃任务（不需要确认）
         async function abandonTask() {
-            if (!confirm('确定要遗弃这个任务吗？遗弃后任务将被移除。')) {
-                return;
-            }
-
             try {
                 const response = await fetch('/api/render-tasks/abandon', {
                     method: 'POST',
@@ -632,6 +653,181 @@ func serveHomePage(w http.ResponseWriter, r *http.Request) {
             } catch (error) {
                 alert('网络错误');
             }
+        }
+
+        // 导出所有任务（JSON格式）
+        async function exportTasks() {
+            try {
+                const response = await fetch('/api/tasks/status');
+                const tasks = await response.json();
+
+                if (tasks.length === 0) {
+                    alert('暂无任务可导出');
+                    return;
+                }
+
+                // 构建导出数据结构
+                const exportData = {
+                    exportTime: new Date().toISOString(),
+                    exportDate: new Date().toLocaleString(),
+                    totalTasks: tasks.length,
+                    tasks: tasks.map(task => ({
+                        taskId: task.taskId,
+                        status: task.status,
+                        req: task.req,
+                        resp: task.resp || '',
+                        timestamp: new Date().toISOString()
+                    }))
+                };
+
+                // 转换为JSON字符串
+                const jsonStr = JSON.stringify(exportData, null, 2);
+
+                // 创建并下载文件
+                const blob = new Blob([jsonStr], { type: 'application/json;charset=utf-8' });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = 'tasks_' + new Date().toISOString().slice(0, 10) + '.json';
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+                URL.revokeObjectURL(url);
+            } catch (error) {
+                alert('导出失败');
+            }
+        }
+
+        // 拖拽相关事件处理
+        function handleDragOver(event) {
+            event.preventDefault();
+            event.stopPropagation();
+            const dropZone = document.getElementById('dropZone');
+            dropZone.style.borderColor = '#2196f3';
+            dropZone.style.background = '#e3f2fd';
+        }
+
+        function handleDragLeave(event) {
+            event.preventDefault();
+            event.stopPropagation();
+            const dropZone = document.getElementById('dropZone');
+            dropZone.style.borderColor = '#ccc';
+            dropZone.style.background = '#fafafa';
+        }
+
+        function handleDrop(event) {
+            event.preventDefault();
+            event.stopPropagation();
+            const dropZone = document.getElementById('dropZone');
+            dropZone.style.borderColor = '#ccc';
+            dropZone.style.background = '#fafafa';
+
+            const files = event.dataTransfer.files;
+            if (files.length > 0) {
+                const file = files[0];
+                if (file.name.endsWith('.json')) {
+                    processImportFile(file);
+                } else {
+                    alert('请选择JSON文件');
+                }
+            }
+        }
+
+        // 存储导入的任务数据
+        let importedTasks = [];
+
+        // 处理导入文件（统一处理函数）
+        function processImportFile(file) {
+            const reader = new FileReader();
+            reader.onload = function(e) {
+                try {
+                    const data = JSON.parse(e.target.result);
+                    if (data.tasks && Array.isArray(data.tasks)) {
+                        importedTasks = data.tasks;
+                        displayImportTasks(importedTasks);
+                    } else {
+                        alert('JSON文件格式不正确');
+                    }
+                } catch (error) {
+                    alert('解析JSON文件失败: ' + error.message);
+                }
+            };
+            reader.readAsText(file);
+        }
+
+        // 处理文件选择
+        function handleFileSelect(event) {
+            const file = event.target.files[0];
+            if (!file) return;
+            processImportFile(file);
+        }
+
+        // 显示导入的任务列表
+        function displayImportTasks(tasks) {
+            const container = document.getElementById('importTasksList');
+            const itemsContainer = document.getElementById('importTasksItems');
+
+            if (tasks.length === 0) {
+                alert('文件中没有任务');
+                return;
+            }
+
+            itemsContainer.innerHTML = tasks.map((task, index) => {
+                const escapedReq = escapeHtml(task.req);
+                const preview = escapedReq.length > 50 ? escapedReq.substring(0, 50) + '...' : escapedReq;
+                return '<div style="margin-bottom: 8px; padding: 8px; background: #f5f5f5; border-radius: 4px; border-left: 3px solid #999;">' +
+                    '<div style="display: flex; align-items: start; gap: 8px;">' +
+                    '<input type="checkbox" id="import_task_' + index + '" value="' + index + '" style="margin-top: 2px;">' +
+                    '<label for="import_task_' + index + '" style="flex: 1; cursor: pointer;">' +
+                    '<div style="font-size: 11px; color: #888; margin-bottom: 2px;">' + escapeHtml(task.taskId) + ' | ' + task.status + '</div>' +
+                    '<div style="font-size: 12px; color: #333;">' + preview + '</div>' +
+                    '</label>' +
+                    '</div>' +
+                    '</div>';
+            }).join('');
+
+            container.style.display = 'block';
+        }
+
+        // 导入选中的任务
+        async function importSelectedTasks() {
+            const checkboxes = document.querySelectorAll('#importTasksItems input[type="checkbox"]:checked');
+
+            if (checkboxes.length === 0) {
+                alert('请选择要导入的任务');
+                return;
+            }
+
+            let successCount = 0;
+            for (const checkbox of checkboxes) {
+                const taskIndex = parseInt(checkbox.value);
+                const task = importedTasks[taskIndex];
+
+                try {
+                    const response = await fetch('/api/tasks', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            customInput: task.req,
+                            continue: true
+                        })
+                    });
+
+                    if (response.ok) {
+                        successCount++;
+                    }
+                } catch (error) {
+                    console.error('导入任务失败:', error);
+                }
+            }
+
+            alert('成功导入 ' + successCount + ' 个任务');
+
+            // 清理
+            document.getElementById('importFile').value = '';
+            document.getElementById('importTasksList').style.display = 'none';
+            importedTasks = [];
+            loadTaskStatus();
         }
 
         function showMessage(elementId, text, type) {
