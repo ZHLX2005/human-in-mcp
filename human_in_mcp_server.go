@@ -152,6 +152,17 @@ func (tm *TaskManager) DeleteTask(taskId string) bool {
 	return false
 }
 
+// ClearAllTasks 清空所有任务
+func (tm *TaskManager) ClearAllTasks() int {
+	tm.mu.Lock()
+	defer tm.mu.Unlock()
+
+	count := len(tm.tasks)
+	tm.tasks = make([]*TaskStatus, 0)
+	debugLog("🗑️  [TaskManager] 清空所有任务 | 已删除: %d 个任务", count)
+	return count
+}
+
 // UserChoiceResponse 用户的选择响应
 type UserChoiceResponse struct {
 	TaskId        string `json:"taskId"`        // 任务ID，创建的任务id
@@ -302,6 +313,7 @@ func humanInteractionHandler(ctx context.Context, req mcp.CallToolRequest) (*mcp
 
 	debugLog("📝 [MCP] 请求参数 | TaskID: %s | 摘要: %s | 困难: %s", id, summary, difficulties)
 
+	// 完成相关的任务
 	process(globalSessionManager, id, summary)
 
 	var nextOptions []string
@@ -377,11 +389,10 @@ func main() {
 	StartTaskServer()
 
 	mcpServer := server.NewMCPServer("human-in-mcp", "v1.0.0",
-		server.WithToolCapabilities(true),
-	)
+		server.WithToolCapabilities(true))
 	mcpServer.AddTool(HumanInTool(), humanInteractionHandler)
-	sseServer := server.NewSSEServer(mcpServer)
-
+	sseServer := server.NewSSEServer(mcpServer,
+		server.WithKeepAlive(true), server.WithKeepAliveInterval(1*time.Hour))
 	mux := http.NewServeMux()
 	mux.Handle("/", sseServer)
 	fmt.Println("✅ Human-In-MCP Server running on http://localhost:8093")

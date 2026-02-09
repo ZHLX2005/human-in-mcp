@@ -21,6 +21,7 @@ func StartTaskServer() {
 	http.HandleFunc("/api/tasks/list", handleListTasks)
 	http.HandleFunc("/api/tasks/status", handleTaskStatus) // 获取任务状态
 	http.HandleFunc("/api/tasks/delete", handleDeleteTask) // 删除任务
+	http.HandleFunc("/api/tasks/clear", handleClearTasks) // 清空所有任务
 	http.HandleFunc("/api/render-tasks", handleRenderTasks)
 	http.HandleFunc("/api/render-tasks/select", handleSelectRenderTask)
 	http.HandleFunc("/api/render-tasks/abandon", handleAbandonRenderTask) // 遗弃AI渲染任务
@@ -387,6 +388,7 @@ func serveHomePage(w http.ResponseWriter, r *http.Request) {
                 <div class="list-header">
                     <span>全部任务</span>
                     <div style="display: flex; gap: 8px; align-items: center;">
+                        <button class="btn" onclick="clearAllTasks()" style="padding: 4px 8px; font-size: 10px; margin-bottom: 0; background: #f44336; color: white; border-color: #f44336;">清空</button>
                         <button class="btn" onclick="exportTasks()" style="padding: 4px 8px; font-size: 10px; margin-bottom: 0;">导出</button>
                         <span id="statusCount" class="badge">0</span>
                     </div>
@@ -695,6 +697,30 @@ func serveHomePage(w http.ResponseWriter, r *http.Request) {
                 URL.revokeObjectURL(url);
             } catch (error) {
                 alert('导出失败');
+            }
+        }
+
+        // 清空所有任务
+        async function clearAllTasks() {
+            if (!confirm('确定要清空所有任务吗？此操作不可撤销！')) {
+                return;
+            }
+
+            try {
+                const response = await fetch('/api/tasks/clear', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' }
+                });
+
+                if (response.ok) {
+                    const result = await response.json();
+                    alert(result.message || '任务已清空');
+                    loadTaskStatus();
+                } else {
+                    alert('清空失败');
+                }
+            } catch (error) {
+                alert('网络错误');
             }
         }
 
@@ -1063,6 +1089,26 @@ func handleDeleteTask(w http.ResponseWriter, r *http.Request) {
 	} else {
 		http.Error(w, "Task not found", http.StatusNotFound)
 	}
+}
+
+// handleClearTasks 清空所有任务
+func handleClearTasks(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost && r.Method != http.MethodDelete {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	debugLog("🌐 [HTTP] %s %s | 清空所有任务", r.Method, r.URL.Path)
+
+	// 清空所有任务
+	count := globalSessionManager.Taskmng.ClearAllTasks()
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"status":  "success",
+		"message": fmt.Sprintf("已清空 %d 个任务", count),
+		"count":   count,
+	})
 }
 
 // handleTaskStatus 返回任务状态列表
