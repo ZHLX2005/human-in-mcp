@@ -98,6 +98,23 @@ func (tm *TaskManager) GetAllTasks() []*TaskStatus {
 	return tasks
 }
 
+// DeleteTask 删除指定任务
+func (tm *TaskManager) DeleteTask(taskId string) bool {
+	tm.mu.Lock()
+	defer tm.mu.Unlock()
+
+	for i, task := range tm.tasks {
+		if task.TaskId == taskId {
+			// 删除该任务
+			tm.tasks = append(tm.tasks[:i], tm.tasks[i+1:]...)
+			debugLog("🗑️  [TaskManager] 删除任务 | ID: %s", taskId)
+			return true
+		}
+	}
+	debugLog("⚠️  [TaskManager] 删除任务失败，任务不存在 | ID: %s", taskId)
+	return false
+}
+
 // UserChoiceResponse 用户的选择响应
 type UserChoiceResponse struct {
 	TaskId        string `json:"taskId"`        // 任务ID，创建的任务id

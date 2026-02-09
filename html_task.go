@@ -20,6 +20,7 @@ func StartTaskServer() {
 	http.HandleFunc("/api/tasks", handleTasks)
 	http.HandleFunc("/api/tasks/list", handleListTasks)
 	http.HandleFunc("/api/tasks/status", handleTaskStatus) // 获取任务状态
+	http.HandleFunc("/api/tasks/delete", handleDeleteTask) // 删除任务
 	http.HandleFunc("/api/render-tasks", handleRenderTasks)
 	http.HandleFunc("/api/render-tasks/select", handleSelectRenderTask)
 	http.HandleFunc("/api/render-tasks/abandon", handleAbandonRenderTask) // 遗弃AI渲染任务
@@ -373,13 +374,30 @@ func serveHomePage(w http.ResponseWriter, r *http.Request) {
     </div>
 
     <script>
+        // 监听任务类型变化
+        document.getElementById('manualContinueTask').addEventListener('change', (e) => {
+            const customInput = document.getElementById('manualCustomInput');
+            if (e.target.value === 'false') {
+                // 结束对话，自动填充文本并禁用输入框
+                customInput.value = '结束任务';
+                customInput.disabled = true;
+                customInput.required = false;
+            } else {
+                // 继续任务，启用输入框
+                customInput.disabled = false;
+                customInput.required = true;
+                customInput.value = '';
+            }
+        });
+
         // 手动任务表单
         document.getElementById('manualTaskForm').addEventListener('submit', async (e) => {
             e.preventDefault();
 
+            const isContinue = document.getElementById('manualContinueTask').value === 'true';
             const task = {
-                customInput: document.getElementById('manualCustomInput').value,
-                continue: document.getElementById('manualContinueTask').value === 'true'
+                customInput: isContinue ? document.getElementById('manualCustomInput').value : '结束任务',
+                continue: isContinue
             };
 
             try {
@@ -392,6 +410,9 @@ func serveHomePage(w http.ResponseWriter, r *http.Request) {
                 if (response.ok) {
                     showMessage('manualMessage', '任务添加成功！', 'success');
                     document.getElementById('manualTaskForm').reset();
+                    // 重置后重新启用输入框
+                    document.getElementById('manualCustomInput').disabled = false;
+                    document.getElementById('manualCustomInput').required = true;
                     loadTaskStatus();
                 } else {
                     showMessage('manualMessage', '添加失败：' + (await response.text()), 'error');
@@ -471,11 +492,18 @@ func serveHomePage(w http.ResponseWriter, r *http.Request) {
                             respHtml = '<div class="task-resp">↳ ' + escapeHtml(task.resp) + '</div>';
                         }
 
+                        // 为pending状态的任务添加删除按钮
+                        let deleteBtn = '';
+                        if (task.status === 'pending') {
+                            deleteBtn = '<button class="option-btn" onclick="deleteTask(\'' + escapeHtml(task.taskId) + '\')" style="margin-top: 4px; background: #f44336; color: white; border-color: #f44336;">删除</button>';
+                        }
+
                         return '<div class="status-item ' + task.status + '">' +
                             '<div class="task-id">ID: ' + escapeHtml(task.taskId) + '</div>' +
                             statusBadge +
                             '<div class="task-req">' + escapeHtml(task.req) + '</div>' +
                             respHtml +
+                            deleteBtn +
                             '</div>';
                     }).join('');
                 }
@@ -580,6 +608,29 @@ func serveHomePage(w http.ResponseWriter, r *http.Request) {
                 }
             } catch (error) {
                 showMessage('renderMessage', '网络错误', 'error');
+            }
+        }
+
+        // 删除任务
+        async function deleteTask(taskId) {
+            if (!confirm('确定要删除这个任务吗？')) {
+                return;
+            }
+
+            try {
+                const response = await fetch('/api/tasks/delete', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ taskId: taskId })
+                });
+
+                if (response.ok) {
+                    loadTaskStatus();
+                } else {
+                    alert('删除失败');
+                }
+            } catch (error) {
+                alert('网络错误');
             }
         }
 
@@ -730,6 +781,17 @@ func handleSelectRenderTask(w http.ResponseWriter, r *http.Request) {
 	// 发送到Out通道
 	globalSessionManager.PushResponse(response)
 
+	// 如果是结束对话，直接标记任务为完成（因为AI不会再给反馈）
+	if !req.Continue {
+		// 获取刚创建的任务（最后一个任务）
+		allTasks := globalSessionManager.Taskmng.GetAllTasks()
+		if len(allTasks) > 0 {
+			lastTask := allTasks[len(allTasks)-1]
+			globalSessionManager.Taskmng.UpdateTask(lastTask.TaskId, "completed", "用户结束对话")
+			debugLog("✅ [HTTP] 结束任务已直接标记为完成 | TaskID: %s", lastTask.TaskId)
+		}
+	}
+
 	// 移除已处理的渲染任务
 	globalSessionManager.RemoveFirstRenderTask()
 
@@ -768,6 +830,43 @@ func handleAbandonRenderTask(w http.ResponseWriter, r *http.Request) {
 		"status":  "success",
 		"message": "Task abandoned",
 	})
+}
+
+// handleDeleteTask 删除指定任务
+func handleDeleteTask(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost && r.Method != http.MethodDelete {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	debugLog("🌐 [HTTP] %s %s | 删除任务", r.Method, r.URL.Path)
+
+	var req struct {
+		TaskId string `json:"taskId"`
+	}
+
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		debugLog("❌ [HTTP] 请求体解析失败 | %v", err)
+		http.Error(w, "Invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	if req.TaskId == "" {
+		debugLog("❌ [HTTP] 缺少必填字段 | taskId")
+		http.Error(w, "taskId is required", http.StatusBadRequest)
+		return
+	}
+
+	// 删除任务
+	if globalSessionManager.Taskmng.DeleteTask(req.TaskId) {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]string{
+			"status":  "success",
+			"message": "Task deleted",
+		})
+	} else {
+		http.Error(w, "Task not found", http.StatusNotFound)
+	}
 }
 
 // handleTaskStatus 返回任务状态列表
