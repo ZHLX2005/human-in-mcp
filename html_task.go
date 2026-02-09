@@ -9,10 +9,9 @@ import (
 
 // TaskRequest 任务请求结构
 type TaskRequest struct {
-	ConversationID string `json:"conversationId"`
-	CustomInput    string `json:"customInput"`
-	Continue       bool   `json:"continue"`
-	SelectedIndex  *int   `json:"selectedIndex"` // 可选，从AI选项中选择
+	CustomInput   string `json:"customInput"`
+	Continue      bool   `json:"continue"`
+	SelectedIndex *int   `json:"selectedIndex"` // 可选，从AI选项中选择
 }
 
 // ProcessedTask 已处理的任务
@@ -336,7 +335,6 @@ func serveHomePage(w http.ResponseWriter, r *http.Request) {
             e.preventDefault();
 
             const task = {
-                conversationId: 'manual-' + Date.now(),
                 customInput: document.getElementById('manualCustomInput').value,
                 continue: document.getElementById('manualContinueTask').value === 'true'
             };
@@ -402,10 +400,10 @@ func serveHomePage(w http.ResponseWriter, r *http.Request) {
                         if (task.nextOptions && task.nextOptions.length > 0) {
                             optionsHtml = '<div class="options">';
                             task.nextOptions.forEach((opt, i) => {
-                                optionsHtml += '<button class="option-btn" onclick="selectOption(\'' + task.conversationId + '\', ' + i + ', \'' + escapeHtml(opt).replace(/'/g, "\\'") + '\')">[' + (i + 1) + '] ' + escapeHtml(opt.substring(0, 15)) + '</button>';
+                                optionsHtml += '<button class="option-btn" onclick="selectOption(' + i + ', \'' + escapeHtml(opt).replace(/'/g, "\\'") + '\')">[' + (i + 1) + '] ' + escapeHtml(opt.substring(0, 15)) + '</button>';
                             });
-                            optionsHtml += '<button class="option-btn" onclick="showCustomInput(\'' + task.conversationId + '\')">自定义</button>';
-                            optionsHtml += '<button class="option-btn" onclick="endChat(\'' + task.conversationId + '\')">结束</button>';
+                            optionsHtml += '<button class="option-btn" onclick="showCustomInput()">自定义</button>';
+                            optionsHtml += '<button class="option-btn" onclick="endChat()">结束</button>';
                             optionsHtml += '</div>';
                         }
 
@@ -450,9 +448,8 @@ func serveHomePage(w http.ResponseWriter, r *http.Request) {
         }
 
         // 选择AI选项
-        async function selectOption(conversationId, index, optionText) {
+        async function selectOption(index, optionText) {
             const task = {
-                conversationId: conversationId,
                 selectedIndex: index,
                 continue: true,
                 customInput: ''
@@ -478,12 +475,11 @@ func serveHomePage(w http.ResponseWriter, r *http.Request) {
         }
 
         // 自定义输入
-        function showCustomInput(conversationId) {
+        function showCustomInput() {
             const customInput = prompt('请输入您的指示:');
             if (customInput === null || customInput.trim() === '') return;
 
             const task = {
-                conversationId: conversationId,
                 selectedIndex: -1,
                 continue: true,
                 customInput: customInput
@@ -503,9 +499,8 @@ func serveHomePage(w http.ResponseWriter, r *http.Request) {
         }
 
         // 结束对话
-        async function endChat(conversationId) {
+        async function endChat() {
             const task = {
-                conversationId: conversationId,
                 continue: false,
                 customInput: '结束对话'
             };
@@ -579,10 +574,9 @@ func handleTasks(w http.ResponseWriter, r *http.Request) {
 
 	// 创建响应并添加到队列
 	response := UserChoiceResponse{
-		ConversationID: task.ConversationID,
-		CustomInput:    task.CustomInput,
-		Continue:       task.Continue,
-		SelectedIndex:  -1,
+		CustomInput:   task.CustomInput,
+		Continue:      task.Continue,
+		SelectedIndex: -1,
 	}
 
 	globalSessionManager.PushResponse(response)
@@ -620,8 +614,7 @@ func handleSelectRenderTask(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req struct {
-		ConversationID string `json:"conversationId"`
-		SelectedIndex  *int   `json:"selectedIndex"`
+		SelectedIndex *int   `json:"selectedIndex"`
 		CustomInput    string `json:"customInput"`
 		Continue       bool   `json:"continue"`
 	}
@@ -631,27 +624,18 @@ func handleSelectRenderTask(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 获取渲染任务
+	// 获取第一个渲染任务
 	renderTasks := globalSessionManager.GetRenderTasks()
-	var targetTask *RenderTask
-
-	for _, task := range renderTasks {
-		if task.ConversationID == req.ConversationID {
-			targetTask = &task
-			break
-		}
-	}
-
-	if targetTask == nil {
-		http.Error(w, "Render task not found", http.StatusNotFound)
+	if len(renderTasks) == 0 {
+		http.Error(w, "No render task available", http.StatusNotFound)
 		return
 	}
+	targetTask := renderTasks[0]
 
 	// 创建响应
 	response := UserChoiceResponse{
-		ConversationID: req.ConversationID,
-		Continue:       req.Continue,
-		SelectedIndex:  -1,
+		Continue:     req.Continue,
+		SelectedIndex: -1,
 	}
 
 	var responseText string
@@ -670,9 +654,9 @@ func handleSelectRenderTask(w http.ResponseWriter, r *http.Request) {
 
 	// 添加到已处理任务
 	globalSessionManager.AddProcessedTask(ProcessedTask{
-		RenderTask:  *targetTask,
-		ProcessedAt: time.Now(),
-		Response:    responseText,
+		RenderTask:   targetTask,
+		ProcessedAt:  time.Now(),
+		Response:     responseText,
 	})
 
 	w.Header().Set("Content-Type", "application/json")

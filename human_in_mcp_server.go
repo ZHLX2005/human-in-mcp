@@ -13,18 +13,16 @@ import (
 
 // UserChoiceResponse 用户的选择响应
 type UserChoiceResponse struct {
-	ConversationID string `json:"conversationId"` // 对话ID
-	SelectedIndex  int    `json:"selectedIndex"`  // 用户选择的选项索引（-1表示自定义输入）
-	CustomInput    string `json:"customInput"`    // 自定义输入内容
-	Continue       bool   `json:"continue"`       // 是否继续对话
+	SelectedIndex int    `json:"selectedIndex"` // 用户选择的选项索引（-1表示自定义输入）
+	CustomInput    string `json:"customInput"`  // 自定义输入内容
+	Continue       bool   `json:"continue"`     // 是否继续对话
 }
 
 // RenderTask AI渲染任务，包含需要显示的信息
 type RenderTask struct {
-	NextOptions    []string `json:"nextOptions"`
-	ConversationID string   `json:"conversationId"`
-	Summary        string   `json:"summary"`
-	Difficulties   string   `json:"difficulties"`
+	NextOptions  []string `json:"nextOptions"`
+	Summary      string   `json:"summary"`
+	Difficulties string   `json:"difficulties"`
 }
 
 // SessionManager 全局单例会话管理器
@@ -114,7 +112,6 @@ func HumanInTool() mcp.Tool {
 • 需要用户决策时
 • 需要展示中间结果时
 注意事项：
-• 必须保持相同的 conversationId 以维持对话上下文
 • 这是一个持续循环，直到用户明确选择结束
 • 收到返回结果后，务必按照"【重要指令】"执行`),
 		mcp.WithString("summary", mcp.Required(), mcp.Description("完成任务的简单总结")),
@@ -129,7 +126,6 @@ func humanInteractionHandler(ctx context.Context, req mcp.CallToolRequest) (*mcp
 	// 解析参数
 	summary, _ := req.RequireString("summary")
 	difficulties, _ := req.RequireString("difficulties")
-	conversationID, _ := req.RequireString("conversationId")
 	nextOptionsStr, _ := req.RequireString("nextOptions")
 
 	var nextOptions []string
@@ -139,10 +135,9 @@ func humanInteractionHandler(ctx context.Context, req mcp.CallToolRequest) (*mcp
 
 	// 创建渲染任务并发送到Render通道（供web端显示）
 	renderTask := RenderTask{
-		NextOptions:    nextOptions,
-		ConversationID: conversationID,
-		Summary:        summary,
-		Difficulties:   difficulties,
+		NextOptions:  nextOptions,
+		Summary:      summary,
+		Difficulties: difficulties,
 	}
 	globalSessionManager.AddRenderTask(renderTask)
 	select {
