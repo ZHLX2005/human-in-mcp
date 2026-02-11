@@ -201,10 +201,10 @@ type SessionManager struct {
 
 // 全局单例
 var globalSessionManager = &SessionManager{
-	Out:         make(chan UserChoiceResponse, 10),
-	Render:      make(chan RenderTask, 10),
-	responses:   make([]UserChoiceResponse, 0, 10),
-	renderTasks: make([]RenderTask, 0, 10),
+	Out:         make(chan UserChoiceResponse, 200),
+	Render:      make(chan RenderTask, 200),
+	responses:   make([]UserChoiceResponse, 0, 200),
+	renderTasks: make([]RenderTask, 0, 200),
 	Taskmng:     NewTaskManager(),
 }
 

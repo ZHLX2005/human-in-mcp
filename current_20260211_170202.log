@@ -1,0 +1,6 @@
+📋 执行命令: go run .
+------------------------------------------------------------
+📝 任务管理页面: http://localhost:8094
+✅ Human-In-MCP Server running on http://localhost:8093
+📝 任务管理页面: http://localhost:8094
+📋 Debug日志文件: human_in_mcp_debug.log

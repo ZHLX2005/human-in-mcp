@@ -807,6 +807,14 @@
             processImportFile(file);
         }
 
+        // 全选/取消全选导入任务
+        function toggleSelectAll(selectAll) {
+            const checkboxes = document.querySelectorAll('#importTasksItems input[type="checkbox"]');
+            checkboxes.forEach(checkbox => {
+                checkbox.checked = selectAll;
+            });
+        }
+
         // 显示导入的任务列表
         function displayImportTasks(tasks) {
             const container = document.getElementById('importTasksList');
@@ -817,7 +825,13 @@
                 return;
             }
 
-            itemsContainer.innerHTML = tasks.map((task, index) => {
+            // 添加全选/取消全选按钮
+            let selectButtonsHtml = '<div style="display: flex; gap: 8px; margin-bottom: 8px;">' +
+                '<button class="option-btn" onclick="toggleSelectAll(true)" style="flex: 1;">全选</button>' +
+                '<button class="option-btn" onclick="toggleSelectAll(false)" style="flex: 1;">取消全选</button>' +
+                '</div>';
+
+            itemsContainer.innerHTML = selectButtonsHtml + tasks.map((task, index) => {
                 const escapedReq = escapeHtml(task.req);
                 const preview = escapedReq.length > 50 ? escapedReq.substring(0, 50) + '...' : escapedReq;
                 return '<div style="margin-bottom: 8px; padding: 8px; background: #f5f5f5; border-radius: 4px; border-left: 3px solid #999;">' +
